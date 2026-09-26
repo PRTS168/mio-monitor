@@ -1,0 +1,28 @@
+# Gradle / Android Studio
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/captures/
+.externalNativeBuild/
+.cxx/
+.kotlin/
+
+# Build outputs
+/build/
+/app/build/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.keystore
+!debug.keystore
+
+# Local backups (not for distribution)
+/backups/
+/app/backups/
+
+# Logs / temp
+*.log
+*.tmp
