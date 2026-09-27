@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -48,12 +49,13 @@ import com.a41probe.monitor.data.agent.AgentState
 import com.a41probe.monitor.data.remote.PrivLevel
 import com.a41probe.monitor.ui.components.BrandKeepAlive
 import com.a41probe.monitor.ui.components.ProbeButton
-import com.a41probe.monitor.ui.components.ProbeCard
+import com.a41probe.monitor.ui.components.SafeCard
 import com.a41probe.monitor.ui.theme.Ink
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.a41probe.monitor.ui.components.ScrollAware
 
 /** 被监控模式页（AgentScreen）。 */
 @Composable
@@ -77,7 +79,10 @@ fun AgentScreen(
         else ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
 
+        val listState = rememberLazyListState()
+    ScrollAware(listState) {
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxWidth(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -86,7 +91,7 @@ fun AgentScreen(
 
         // 总开关
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "总开关") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("开启被监控模式", color = Ink.tx, fontSize = 15.sp,
@@ -120,7 +125,7 @@ fun AgentScreen(
 
         // 采集授权档位
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "采集授权") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("采集授权档位", color = Ink.tx, fontSize = 15.sp,
@@ -145,7 +150,7 @@ fun AgentScreen(
 
         // 运行状态
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "运行状态") {
                 Text("运行状态", color = Ink.tx, fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(8.dp))
@@ -160,7 +165,7 @@ fun AgentScreen(
 
         // 防杀后台策略
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "防杀策略") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("防杀后台策略", color = Ink.tx, fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
@@ -220,7 +225,7 @@ fun AgentScreen(
 
         // 厂商后台保活（国产 ROM 关键，v0.24）
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "厂商保活") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("厂商后台保活", color = Ink.tx, fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
@@ -265,7 +270,7 @@ fun AgentScreen(
 
         // 已连接监控端
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "监控端连接") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("已连接监控端", color = Ink.tx, fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
@@ -298,7 +303,8 @@ fun AgentScreen(
             )
         }
         item { Spacer(Modifier.height(6.dp)) }
-    }
+    
+    }}
 }
 
 @Composable

@@ -55,6 +55,20 @@ import kotlin.math.sin
  */
 private const val HIST_WINDOW = 60
 
+// ===== v0.28.0 绘制缓存：Paint/数组文件级复用，避免每帧 new（GC 抖动 = 滚动掉帧）=====
+// 注意：Android Paint 非线程安全，但 Canvas 绘制恒在主线程，单例缓存安全。
+private val axisPaint = android.graphics.Paint().apply {
+    color = Ink.off.copy(alpha = 0.85f).toArgb()
+    isAntiAlias = true
+    typeface = android.graphics.Typeface.MONOSPACE
+}
+private val emptyPaint = android.graphics.Paint().apply {
+    color = Ink.off.copy(alpha = 0.8f).toArgb()
+    isAntiAlias = true
+}
+private val avgDashes = floatArrayOf(6f, 5f)
+private val zeroDashes = floatArrayOf(5f, 4f)
+
 /** 环形进度：容量 / 健康度等。fraction=null 表示"读不到"，只画轨道不画弧（UX/M7：不把未知伪装成 0） */
 @Composable
 fun GaugeRing(
@@ -117,7 +131,7 @@ fun GaugeRing(
     }
 }
 
-// ===== 曲线：最新值平滑插值 + 窗口动态归一化（对标搞机牛实时曲线观感） =====
+// ===== 曲线：最新值平滑插值 + 窗口动态归一化（实时曲线观感） =====
 
 /**
  * 曲线归一化（v10 修正）：以窗口中心为锚（窄幅/平线居中），span = max(半幅, max×minRatio)。
@@ -125,15 +139,17 @@ fun GaugeRing(
  * 即：真实大幅变化充满画布，微小波动只显示微小起伏（不放大噪声），恒值显示中线。
  */
 private class NormScope(private val center: Float, private val span: Float) {
-    /** 平线/窄幅（span<=0）画中线 */
+    /** 平线/窄幅（span<=0）画中线；NaN/Inf 一律画中线（防 Canvas 非有限坐标崩溃） */
     fun y(v: Float): Float =
-        if (span <= 0f) 0.5f
+        if (!v.isFinite() || span <= 0f) 0.5f
         else 0.5f + ((v - center) / span).coerceIn(-1f, 1f) * 0.44f   // 0.06..0.94
     companion object {
         fun of(points: List<Float>, minRatio: Float = 0.25f): NormScope? {
-            if (points.isEmpty()) return null
-            val mn = points.minOrNull() ?: return null
-            val mx = points.maxOrNull() ?: return null
+            // v0.26.3(CRASH): 先滤 NaN/Inf——一个非有限值会毒化 mn/mx，span 变 NaN
+            val finite = points.filter { it.isFinite() }
+            if (finite.isEmpty()) return null
+            val mn = finite.minOrNull() ?: return null
+            val mx = finite.maxOrNull() ?: return null
             val half = (mx - mn) / 2f
             if (half < 1e-4f) return NormScope((mn + mx) / 2f, -1f)   // 恒值：中线占位
             val span = half.coerceAtLeast(mx * minRatio)
@@ -150,7 +166,8 @@ private class NormScope(private val center: Float, private val span: Float) {
  */
 @Composable
 private fun rememberSmooth(series: List<Float>, animMs: Int = 380): List<Float> {
-    val anim = remember { Animatable(0f) }
+    // v0.26.6(P0-3): 首帧从真实末点起值——Animatable(0) 会让多点首帧 dropLast(1)+0 毒化 NormScope
+    val anim = remember { Animatable(series.lastOrNull() ?: 0f) }
     val animScale = rememberAnimatorScale()   // v20.20(P1-3): Reduce Motion 时曲线直切
     LaunchedEffect(series) {
         val t = series.lastOrNull()
@@ -197,7 +214,9 @@ fun Sparkline(
         val pad = 6.dp.toPx()
         grid(w, h, pad)
         // 固定窗口槽位：最新点在最右，历史向左滚动；stretchToFull 时稀疏序列按点数铺满
-        val nSlots = if (stretchToFull && pts.size > 1) pts.size else HIST_WINDOW
+        // v0.26.3(CRASH): 单点 + stretchToFull → nSlots=1 → step=Infinity → Canvas 抛异常。
+        // 至少 2 槽：单点画在槽 0/1 位置，杜绝除零
+        val nSlots = if (stretchToFull) pts.size.coerceAtLeast(2) else HIST_WINDOW
         val step = (w - pad * 2) / (nSlots - 1)
         val startIdx = (nSlots - pts.size).coerceAtLeast(0)
         if (pts.size == 1) {
@@ -276,7 +295,7 @@ fun MultiLine(
     }
 }
 
-/** 单指标面积折线（对标搞机牛）：细线 + 渐变填充 + 端点 + 平均参考虚线；数值标注放上方 */
+/** 单指标面积折线：细线 + 渐变填充 + 端点 + 平均参考虚线；数值标注放上方 */
 @Composable
 fun AreaLine(
     series: List<Float>,
@@ -305,8 +324,15 @@ fun AreaLine(
     }
     val path = remember { Path() }
     val area = remember { Path() }
-    val dash = remember { floatArrayOf(6f, 5f) }
+    val dash = avgDashes
     val pts = rememberSmooth(series)
+    // v0.28.0: 渐变 Brush 组合期缓存（随色变化重建），不再每帧新建
+    val areaBrush = remember(color) {
+        androidx.compose.ui.graphics.Brush.verticalGradient(
+            0f to color.copy(alpha = 0.26f),
+            1f to color.copy(alpha = 0.02f),
+        )
+    }
     // v20.4: 最新点脉冲——新数据到达时端点弹一下，曲线有呼吸感
     val pulse = remember { Animatable(1f) }
     val animScale = rememberAnimatorScale()
@@ -321,7 +347,10 @@ fun AreaLine(
         }
     }
     var prevLen by remember { mutableStateOf(series.size) }
-    LaunchedEffect(series.size) {
+    val scrolling = LocalScrolling.current
+    LaunchedEffect(series.size, scrolling) {
+        // v0.28.3: 滚动中脉冲直切——动画帧不再与滚动帧叠加（滑动卡顿根因之一）
+        if (scrolling) { pulse.snapTo(1f); prevLen = series.size; return@LaunchedEffect }
         if (prevLen != 0 && series.size > prevLen && animScale > 0f) {
             // v20.17(P2-2): 幅度 1.9→1.12——大脉冲在 1s 采样下等于每帧都在跳
             pulse.snapTo(1.12f)
@@ -341,11 +370,16 @@ fun AreaLine(
         val w = size.width
         val h = size.height
         // S3: 有 y 轴刻度时左侧留出刻度文字宽度；无刻度也 ≥6dp（L7: 端点圆不被裁切）
+        // v0.26.3(P1-2): 左右刻度边距与上下安全边距分离——此前 26dp 同时充当
+        // 上下边距，92dp 高曲线绘图区被砍到 40dp（纵向压扁）；padY 仅防端点圆裁切
         val pad = if (axisLabels != null) 26.dp.toPx() else 6.dp.toPx()
-        grid(w, h, pad)
+        val padY = 4.dp.toPx()
+        grid(w, h, pad, padY)
         axisLabels(axisLabels, pad, h)
         // 固定窗口槽位：最新点在最右；stretchToFull 时稀疏序列按点数铺满
-        val nSlots = if (stretchToFull && pts.size > 1) pts.size else HIST_WINDOW
+        // v0.26.3(CRASH): 单点 + stretchToFull → nSlots=1 → step=Infinity → Canvas 抛异常。
+        // 至少 2 槽：单点画在槽 0/1 位置，杜绝除零
+        val nSlots = if (stretchToFull) pts.size.coerceAtLeast(2) else HIST_WINDOW
         val step = (w - pad * 2) / (nSlots - 1)
         val startIdx = (nSlots - pts.size).coerceAtLeast(0)
         // v20.7(S2-3): 单点不再提前 return——统一走下方逻辑：
@@ -355,7 +389,7 @@ fun AreaLine(
         path.reset()
         pts.forEachIndexed { i, v ->
             val x = pad + step * (startIdx + i)
-            val y = h - pad - n.y(v) * (h - pad * 2)
+            val y = h - padY - n.y(v) * (h - padY * 2)
             if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
         }
         area.reset()
@@ -363,16 +397,10 @@ fun AreaLine(
         area.lineTo(pad + step * (startIdx + pts.size - 1), h)
         area.lineTo(pad + step * startIdx, h)
         area.close()
-        drawPath(
-            area,
-            brush = androidx.compose.ui.graphics.Brush.verticalGradient(
-                0f to color.copy(alpha = 0.26f),
-                1f to color.copy(alpha = 0.02f),
-            ),
-        )
+        drawPath(area, brush = areaBrush)
         drawPath(path, color, style = Stroke(width = strokeW, cap = StrokeCap.Round))
         if (avgValue != null) {
-            val ay = h - pad - n.y(avgValue) * (h - pad * 2)
+            val ay = h - padY - n.y(avgValue) * (h - padY * 2)
             drawLine(
                 color.copy(alpha = 0.6f),
                 Offset(pad, ay), Offset(w - pad, ay),
@@ -382,15 +410,15 @@ fun AreaLine(
         }
         val last = pts.last()
         val lx = pad + step * (startIdx + pts.size - 1)
-        val ly = h - pad - n.y(last) * (h - pad * 2)
+        val ly = h - padY - n.y(last) * (h - padY * 2)
         // 0 轴参考线：带符号电流/功率图居中画虚线，充电(正)在上、放电(负)在下，方向一目了然
         if (zeroLineValue != null) {
-            val zy = h - pad - n.y(zeroLineValue) * (h - pad * 2)
+            val zy = h - padY - n.y(zeroLineValue) * (h - padY * 2)
             drawLine(
                 Ink.tx2.copy(alpha = 0.5f),
                 Offset(pad, zy), Offset(w - pad, zy),
                 strokeWidth = 1.3f,
-                pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(5f, 4f)),
+                pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(zeroDashes),
             )
         }
         drawCircle(color, radius = 3.5.dp.toPx() * pulse.value, center = Offset(lx, ly))
@@ -405,7 +433,7 @@ fun AreaLine(
                 val ph = labelPaint.textSize + 12f            // 上下各 6 内边距
                 val pw = tw + 16f                              // 左右各 8 内边距
                 val px = w - pad - pw                          // 右对齐，留 pad
-                val py = if (ly > (h - pad) / 2f) pad else h - pad - ph
+                val py = if (ly > (h - padY) / 2f) padY else h - padY - ph
                 drawRoundRect(
                     color = Color.White.copy(alpha = 0.85f),
                     topLeft = Offset(px, py),
@@ -422,10 +450,10 @@ fun AreaLine(
 }
 
 /** 浅色网格线（1/4 高度，比旧版加深一档保证可读） */
-private fun DrawScope.grid(w: Float, h: Float, pad: Float) {
+private fun DrawScope.grid(w: Float, h: Float, pad: Float, padY: Float = pad) {
     val gridColor = Ink.stroke.copy(alpha = 0.75f)
     repeat(3) { i ->
-        val y = pad + (h - pad * 2) * (i + 1) / 4f
+        val y = padY + (h - padY * 2) * (i + 1) / 4f
         drawLine(gridColor, Offset(pad, y), Offset(w - pad, y), strokeWidth = 1f)
     }
 }
@@ -433,11 +461,7 @@ private fun DrawScope.grid(w: Float, h: Float, pad: Float) {
 /** S4: 空态占位——把"没数据"画成明确提示，不再与"渲染失败"的空白等价 */
 private fun DrawScope.drawEmpty(w: Float, h: Float, pad: Float, msg: String = "采集中…") {
     grid(w, h, pad)
-    val paint = android.graphics.Paint().apply {
-        color = Ink.off.copy(alpha = 0.8f).toArgb()
-        textSize = (h * 0.42f).coerceIn(6f, 12f)
-        isAntiAlias = true
-    }
+    val paint = emptyPaint.apply { textSize = (h * 0.42f).coerceIn(6f, 12f) }
     drawContext.canvas.nativeCanvas.drawText(
         msg, (w - paint.measureText(msg)) / 2f, (h + paint.textSize) / 2f, paint)
 }
@@ -445,12 +469,7 @@ private fun DrawScope.drawEmpty(w: Float, h: Float, pad: Float, msg: String = "�
 /** S3: y 轴刻度（顶/中/底三条），nativeCanvas 文本，与曲线共用同一量程位置 */
 private fun DrawScope.axisLabels(labels: List<String>?, pad: Float, h: Float) {
     if (labels == null || labels.size != 3) return
-    val paint = android.graphics.Paint().apply {
-        color = Ink.off.copy(alpha = 0.85f).toArgb()
-        textSize = 9.sp.toPx()
-        isAntiAlias = true
-        typeface = android.graphics.Typeface.MONOSPACE
-    }
+    val paint = axisPaint.apply { textSize = 9.sp.toPx() }
     val xs = 2.dp.toPx()
     // 顶/中/底按画布高度均匀分布；此前底部误用左侧 pad 当底部边距
     // （pad=26dp → 0% 上移约 71px，与 50% 重叠）——现改为贴画布顶/中/底

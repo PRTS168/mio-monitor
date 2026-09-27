@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,9 +28,10 @@ import com.a41probe.monitor.data.remote.RemoteSnapshot
 import com.a41probe.monitor.ui.components.AreaLine
 import com.a41probe.monitor.ui.components.BarRow
 import com.a41probe.monitor.ui.components.ProbeButton
-import com.a41probe.monitor.ui.components.ProbeCard
+import com.a41probe.monitor.ui.components.SafeCard
 import com.a41probe.monitor.ui.components.StatRow
 import com.a41probe.monitor.ui.theme.Ink
+import com.a41probe.monitor.ui.components.ScrollAware
 
 /** 远端设备详情：本地累积远端快照历史，复用全套图表。 */
 @Composable
@@ -65,7 +67,10 @@ fun RemoteDetailScreen(
         }
     }
 
+        val listState = rememberLazyListState()
+    ScrollAware(listState) {
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxWidth(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -90,7 +95,7 @@ fun RemoteDetailScreen(
 
         if (s == null) {
             item {
-                ProbeCard {
+                SafeCard(fallbackTitle = "设备状态") {
                     Text(e?.log?.ifBlank { "等待数据…" } ?: "等待数据…",
                         color = Ink.tx2, fontSize = 13.sp)
                     Spacer(Modifier.height(10.dp))
@@ -103,7 +108,7 @@ fun RemoteDetailScreen(
 
         // CPU 占用曲线
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "CPU 占用") {
                 Text("CPU 占用", color = Ink.tx, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(8.dp))
                 AreaLine(
@@ -120,7 +125,7 @@ fun RemoteDetailScreen(
 
         // 分核占用
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "分核占用") {
                 Text("分核占用", color = Ink.tx, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(6.dp))
                 val labelColor = remember(s.clusters, s.maxFreqs) { remoteClusterColorMap(s) }
@@ -139,7 +144,7 @@ fun RemoteDetailScreen(
 
         // 温度曲线
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "温度曲线") {
                 Text("温度曲线", color = Ink.tx, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(8.dp))
                 Text("结温（CPU）", color = Ink.tx2, fontSize = 11.sp)
@@ -156,7 +161,7 @@ fun RemoteDetailScreen(
 
         // 电池曲线
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "电池功率") {
                 val chargingNow = isCharging(s)
                 val fullNow = isFull(s)
                 val powerColor = when {
@@ -203,7 +208,7 @@ fun RemoteDetailScreen(
 
         // 电池详情
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "电池详情") {
                 Text("电池详情", color = Ink.tx, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(6.dp))
                 val b = s.battery
@@ -220,7 +225,7 @@ fun RemoteDetailScreen(
 
         // 内存 / GPU / 热缓解
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "内存GPU热缓解") {
                 Text("内存 · GPU · 热缓解", color = Ink.tx, fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(6.dp))
@@ -239,7 +244,8 @@ fun RemoteDetailScreen(
         }
 
         item { Spacer(Modifier.height(8.dp)) }
-    }
+    
+    }}
 }
 
 private fun append(

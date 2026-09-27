@@ -1,5 +1,6 @@
 package com.a41probe.monitor.ui.screens
 
+import com.a41probe.monitor.ui.components.MioPageTitle
 import android.content.Context
 import android.hardware.Sensor
 import android.hardware.SensorManager
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,11 +34,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.a41probe.monitor.data.MonitorViewModel
 import com.a41probe.monitor.ui.components.CardTitle
-import com.a41probe.monitor.ui.components.ProbeCard
+import com.a41probe.monitor.ui.components.SafeCard
 import com.a41probe.monitor.ui.components.SensorTile
 import com.a41probe.monitor.ui.theme.Ink
 import com.a41probe.monitor.ui.theme.Priv
 import kotlin.math.roundToInt
+import com.a41probe.monitor.ui.components.ScrollAware
 
 private fun f2(v: Float): String = ((v * 100).roundToInt() / 100.0).toString()
 
@@ -54,12 +57,18 @@ fun SensorsScreen(vm: MonitorViewModel, onBack: () -> Unit = {}) {
         onDispose { vm.unregisterSensors() }
     }
 
+        val listState = rememberLazyListState()
+    ScrollAware(listState) {
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxWidth(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // v20.17(P0-6): 面包屑返回——传感器页从设置进入，清晰可回
+        item {
+            MioPageTitle("传感器", "运动 · 环境 · 硬件上报")
+        }
+
         item {
             Row(
                 modifier = Modifier
@@ -77,7 +86,7 @@ fun SensorsScreen(vm: MonitorViewModel, onBack: () -> Unit = {}) {
             }
         }
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "传感器状态") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         CardTitle("传感器状态", Priv.FREE)
@@ -97,7 +106,7 @@ fun SensorsScreen(vm: MonitorViewModel, onBack: () -> Unit = {}) {
                 }
             }
         }
-        // 5 类实时通道：每传感器一张独立卡片（对标搞机牛传感器测试页）
+        // 5 类实时通道：每传感器一张独立卡片（传感器测试页）
         item {
             SensorTile(
                 name = "加速度传感器", desc = "检测设备加速度",
@@ -152,7 +161,7 @@ fun SensorsScreen(vm: MonitorViewModel, onBack: () -> Unit = {}) {
         }
         // 全部传感器列表
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "传感器列表") {
                 CardTitle("全部 ${sensors.size} 只", Priv.FREE)
                 Spacer(Modifier.height(4.dp))
                 sensors.chunked(2).forEach { pair ->
@@ -172,7 +181,8 @@ fun SensorsScreen(vm: MonitorViewModel, onBack: () -> Unit = {}) {
             }
         }
         item { Spacer(Modifier.height(4.dp)) }
-    }
+    
+    }}
 }
 
 private fun listSensors(ctx: Context): List<SensorInfo> {

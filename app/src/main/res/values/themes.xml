@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- v0.27.0: 应用主题——启动窗背景与开屏同蓝渐变，冷启动不再先闪深灰窗 -->
+    <style name="Theme.Mio" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash_window_bg</item>
+        <item name="android:statusBarColor">#007AFF</item>
+        <item name="android:navigationBarColor">#007AFF</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

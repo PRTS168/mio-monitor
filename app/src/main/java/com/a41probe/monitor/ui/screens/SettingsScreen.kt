@@ -1,5 +1,13 @@
 package com.a41probe.monitor.ui.screens
 
+import com.a41probe.monitor.ui.components.GlassConfig
+import com.a41probe.monitor.ui.components.GlassLevel
+import com.a41probe.monitor.ui.components.HapticLevel
+import com.a41probe.monitor.ui.components.MioHaptics
+import com.a41probe.monitor.ui.components.rememberHaptics
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import com.a41probe.monitor.ui.components.MioPageTitle
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
@@ -14,7 +22,10 @@ import android.os.StatFs
 import android.os.Looper
 import android.provider.MediaStore
 import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,6 +34,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -33,6 +46,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -48,7 +63,7 @@ import com.a41probe.monitor.data.Snapshot
 import com.a41probe.monitor.ui.components.CardTitle
 import com.a41probe.monitor.ui.components.DotBadge
 import com.a41probe.monitor.ui.components.ProbeButton
-import com.a41probe.monitor.ui.components.ProbeCard
+import com.a41probe.monitor.ui.components.SafeCard
 import com.a41probe.monitor.ui.components.SettingRow
 import com.a41probe.monitor.ui.components.StatRow
 import com.a41probe.monitor.ui.theme.Ink
@@ -60,6 +75,7 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.a41probe.monitor.ui.components.ScrollAware
 
 // ---- v20.14: 设备信息全部运行时真读（不写死机型/SoC，兼容任意手机） ----
 private fun readSoc(): String {
@@ -107,7 +123,7 @@ private fun readScreen(ctx: Context): String {
 
 @Volatile private var csvExporting = false   // P2-1: 连点导出防抖，避免并发写多份
 
-/** 导出当前快照为 CSV（下载/A41Probe/时间戳.csv）并提示路径；写盘移出主线程
+/** 导出当前快照为 CSV（下载/Mio/时间戳.csv）并提示路径；写盘移出主线程
  *  v20.21 终审修复：BOM + 全字段引号转义 + RAW 补全（/proc/stat/governor/gpu freq raw/BM temp）
  *  + RENDERED 补全（CPU 占用/GPU 温度/外壳 skin/广播温度/传感器）+ 功率口径对齐 + 小数位对齐 UI */
 private fun exportCsv(vm: MonitorViewModel, ctx: Context) {
@@ -306,14 +322,14 @@ private fun exportCsv(vm: MonitorViewModel, ctx: Context) {
             ren("sensor.proximity", "%.1f".format(f1, v[0]), "cm", "传感器")
         }
 
-        val name = "A41Probe-" + SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date()) + ".csv"
-        // S3: Toast 切回主线程；S1(UX): 导出到公共「下载/A41Probe」目录——内部 files/ 用户找不到
+        val name = "Mio-" + SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date()) + ".csv"
+        // S3: Toast 切回主线程；S1(UX): 导出到公共「下载/Mio」目录——内部 files/ 用户找不到
         val msg = runCatching {
             if (Build.VERSION.SDK_INT >= 29) {
                 val values = ContentValues().apply {
                     put(MediaStore.Downloads.DISPLAY_NAME, name)
                     put(MediaStore.Downloads.MIME_TYPE, "text/csv")
-                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/A41Probe")
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Mio")
                 }
                 val uri = ctx.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                     ?: error("插入下载目录失败")
@@ -331,7 +347,7 @@ private fun exportCsv(vm: MonitorViewModel, ctx: Context) {
                     arrayOf(MediaStore.Downloads._ID),
                     // P2-2: 追加 RELATIVE_PATH 限定，只清理本 App 导出目录，不误删其它位置同名文件
                     "${MediaStore.Downloads.DISPLAY_NAME} LIKE ? AND ${MediaStore.Downloads.RELATIVE_PATH} = ?",
-                    arrayOf("A41Probe-%.csv", Environment.DIRECTORY_DOWNLOADS + "/A41Probe/"), null,
+                    arrayOf("Mio-%.csv", Environment.DIRECTORY_DOWNLOADS + "/Mio/"), null,
                 )?.use { c ->
                     val ids = mutableListOf<Long>()
                     while (c.moveToNext()) ids.add(c.getLong(0))
@@ -344,12 +360,12 @@ private fun exportCsv(vm: MonitorViewModel, ctx: Context) {
                         }
                     }
                 }
-                "已导出至 下载/A41Probe/$name"
+                "已导出至 下载/Mio/$name"
             } else {
-                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "A41Probe")
+                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Mio")
                 dir.mkdirs()
                 File(dir, name).writeText(sb.toString())
-                "已导出至 下载/A41Probe/$name"
+                "已导出至 下载/Mio/$name"
             }
         }.getOrElse { "导出失败: ${it.message}" }
         Handler(Looper.getMainLooper()).post {
@@ -383,16 +399,24 @@ fun SettingsScreen(
     onOpenSensors: () -> Unit = {},
     onOpenAgent: () -> Unit = {},
     onOpenMonitor: () -> Unit = {},
+    onShowOnboarding: () -> Unit = {},
 ) {
-    val snap by vm.snapshot.collectAsState()
+    // v0.28.0: 设置页只需权限三态 → privFlow（低频流，整页不再每秒重组）
+    val snap by vm.privFlow.collectAsState()
     val ctx = LocalContext.current
+        val listState = rememberLazyListState()
+    ScrollAware(listState) {
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxWidth(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            ProbeCard {
+            MioPageTitle("设置", "提权通道 · 双模式 · 导出")
+        }
+        item {
+            SafeCard(fallbackTitle = "局域网双模式") {
                 CardTitle("局域网双模式")
                 Text("两台手机装同一个 App：一台被监控、一台监控，自动发现、全自动连接。",
                     color = Ink.tx2, fontSize = 11.5.sp, lineHeight = 16.sp)
@@ -407,7 +431,7 @@ fun SettingsScreen(
             }
         }
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "提权通道") {
                 CardTitle("提权通道")
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -478,34 +502,109 @@ fun SettingsScreen(
             }
         }
         item {
-            ProbeCard {
+            // v0.28.3: 玻璃效果档位（完整/简约/关闭，立即生效）
+            SafeCard(fallbackTitle = "显示") {
+                CardTitle("显示")
+                Spacer(Modifier.height(6.dp))
+                Text("玻璃效果：完整 = 卡片与导航栏半透明、透出背景立绘（推荐）；简约 = 半透明更实，少一层透明叠加（低端机更流畅）；关闭 = 全部纯色卡片。",
+                    color = Ink.tx2, fontSize = 11.sp, lineHeight = 16.sp)
+                Spacer(Modifier.height(10.dp))
+                var glassSel by remember { mutableStateOf(GlassConfig.current()) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(GlassLevel.FULL to "完整", GlassLevel.LITE to "简约", GlassLevel.OFF to "关闭").forEach { (lv, label) ->
+                        val sel = glassSel == lv
+                        Box(
+                            Modifier.weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (sel) Ink.accent else Color(0xFFF2F2F7))
+                                .clickable {
+                                    glassSel = lv
+                                    GlassConfig.set(ctx, lv)
+                                }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(label, color = if (sel) Color.White else Ink.tx2,
+                                fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                // v0.28.13: 触感强度——**按住就持续震、松手即停**；轻点则该档被选中并保存
+                Text("触感强度：按住「轻/中/重」任意一键可一直震（松手即停），轻点选中该档。",
+                    color = Ink.tx2, fontSize = 11.sp, lineHeight = 16.sp)
+                Spacer(Modifier.height(8.dp))
+                val haptics = rememberHaptics()
+                var hapticSel by remember { mutableStateOf(MioHaptics.current()) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(
+                        HapticLevel.LIGHT to "轻",
+                        HapticLevel.MEDIUM to "中",
+                        HapticLevel.HEAVY to "重",
+                    ).forEach { (lv, label) ->
+                        val sel = hapticSel == lv
+                        Box(
+                            Modifier.weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (sel) Ink.accent else Color(0xFFF2F2F7))
+                                .pointerInput(lv) {
+                                    detectTapGestures(
+                                        onPress = {
+                                            MioHaptics.startHold(ctx, lv)
+                                            tryAwaitRelease()
+                                            MioHaptics.stopHold(ctx)
+                                        },
+                                        onTap = {
+                                            hapticSel = lv
+                                            MioHaptics.set(ctx, lv)
+                                            haptics.press()
+                                        },
+                                    )
+                                }
+                                .padding(vertical = 14.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(label, color = if (sel) Color.White else Ink.tx2,
+                                fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("切换立即生效，无需重启。", color = Ink.off, fontSize = 10.sp)
+            }
+        }
+        item {
+            SafeCard(fallbackTitle = "采样") {
                 CardTitle("采样")
                 SettingRow("采样周期", sub = "固定 1s，实时刷新", trailing = {
                     Row {
                         Text("1s（固定）", color = Ink.tx2, fontSize = 12.sp,
                             modifier = Modifier.padding(end = 12.dp))
-                        Text("5s · 规划中", color = Ink.off, fontSize = 12.sp)
+                        Text("后台 3s", color = Ink.off, fontSize = 12.sp)
                     }
                 })
                 // v20.17(P1-11): 两个"规划中"占两行是噪音——折叠成一行，一眼扫过
-                SettingRow("后台采集 · 24h 历史", sub = "通知常驻 / 本地历史 · 规划中", trailing = {
+                SettingRow("24h 历史", sub = "本地长周期记录 · 规划中", trailing = {
                     Text("规划中", color = Ink.off, fontSize = 11.sp)
                 })
             }
         }
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "数据") {
                 CardTitle("数据")
-                SettingRow("导出快照 CSV", sub = "全部参数（写入 下载/A41Probe）", trailing = {
+                SettingRow("导出快照 CSV", sub = "全部参数（写入 下载/Mio）", trailing = {
                     ProbeButton(text = "导出", onClick = { exportCsv(vm, ctx) })
                 })
                 SettingRow("传感器总览", sub = "实时通道与全部传感器列表", trailing = {
                     ProbeButton(text = "查看", onClick = onOpenSensors)
                 })
+                SettingRow("使用引导", sub = "重看首次启动的完整功能说明", trailing = {
+                    ProbeButton(text = "重看", onClick = onShowOnboarding)
+                })
             }
         }
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "设备信息") {
                 CardTitle("设备信息")
                 // v20.21(P2-16): 读 /proc 移出组合——组合每秒重组，不再反复在主线程读文件
                 var soc by remember { mutableStateOf("–") }
@@ -540,7 +639,7 @@ fun SettingsScreen(
             }
         }
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "关于") {
                 CardTitle("关于")
                 StatRow("App", "v${BuildConfig.VERSION_NAME} · 纯只读", stateColor = Ink.accent)
             }
@@ -551,5 +650,6 @@ fun SettingsScreen(
                 modifier = Modifier.padding(horizontal = 4.dp))
         }
         item { Spacer(Modifier.height(4.dp)) }
-    }
+    
+    }}
 }

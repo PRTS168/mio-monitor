@@ -46,7 +46,7 @@ private val AppShapes = Shapes(
 )
 
 @Composable
-fun A41Theme(content: @Composable () -> Unit) {
+fun MioTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = AppColors,
         typography = AppTypography,

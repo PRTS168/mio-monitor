@@ -25,7 +25,7 @@ object BrandKeepAlive {
 
     /** 多任务加锁的纯文字提示（无统一 intent，因厂商交互各异）。 */
     const val RECENT_LOCK_TIP =
-        "从屏幕底部上滑并停留进入「多任务」，找到 A41 Probe，下拉卡片或点击锁形图标将其锁定，避免被一键清理。"
+        "从屏幕底部上滑并停留进入「多任务」，找到 Mio 澪，下拉卡片或点击锁形图标将其锁定，避免被一键清理。"
 
     fun items(ctx: Context): List<KeepItem> {
         val brand = Build.BRAND.lowercase()
@@ -65,7 +65,7 @@ object BrandKeepAlive {
             }
             isVivo -> out += KeepItem(
                 "vivo_auto", "允许自启动与后台运行",
-                "在 i 管家中允许 A41 Probe 自启动、后台弹出与后台运行。",
+                "在 i 管家中允许 Mio 澪 自启动、后台弹出与后台运行。",
                 "去开启",
                 listOf(
                     "com.iqoo.secure/.ui.phoneoptimize.BgStartUpManager",
@@ -75,7 +75,7 @@ object BrandKeepAlive {
             )
             isMi -> out += KeepItem(
                 "mi_auto", "允许自启动",
-                "MIUI 默认禁止自启动，需在安全中心允许 A41 Probe 自启动。",
+                "MIUI 默认禁止自启动，需在安全中心允许 Mio 澪 自启动。",
                 "去开启",
                 listOf(
                     "com.miui.securitycenter/.permission.autostart.EditAutoStartActivity",
@@ -93,7 +93,7 @@ object BrandKeepAlive {
             )
             isSamsung -> out += KeepItem(
                 "ss_bg", "允许后台活动 · 移除电池限制",
-                "在电池与设备维护中允许 A41 Probe 后台运行、不受限制。",
+                "在电池与设备维护中允许 Mio 澪 后台运行、不受限制。",
                 "去设置",
                 listOf("com.samsung.android.sm/.ui.managespace.MainRunningActivity"),
                 action = Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,

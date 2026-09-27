@@ -7,7 +7,7 @@ import android.util.Log
 import com.a41probe.monitor.data.remote.RemoteDeviceInfo
 
 /**
- * 被监控端 mDNS 广播封装：向局域网注册 `_a41probe._tcp`，监控端据此自动发现。
+ * 被监控端 mDNS 广播封装：向局域网注册 `_mio._tcp`，监控端据此自动发现。
  */
 class AgentNsd(context: Context) {
     private val nsd = context.getSystemService(Context.NSD_SERVICE) as NsdManager
@@ -91,7 +91,7 @@ class AgentNsd(context: Context) {
     }
 
     companion object {
-        const val SERVICE_TYPE = "_a41probe._tcp."
+        const val SERVICE_TYPE = "_mio._tcp."
         private const val TAG = "AgentNsd"
     }
 }

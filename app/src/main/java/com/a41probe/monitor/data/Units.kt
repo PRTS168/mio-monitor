@@ -42,4 +42,18 @@ object Units {
         if (raw == null || raw <= 0) return null
         return if (raw > 10_000) raw / 1_000_000.0 else raw / 1_000.0
     }
+
+    // ===== v0.28.2 鲁棒性：物理范围安全钳制（脏数据 → null，不污染 UI/曲线）=====
+
+    /** 电压安全范围钳制：手机锂电池 2.5..5.5V，超界返回 null */
+    fun safeVoltage(v: Double?): Double? = v?.takeIf { it in 2.5..5.5 }
+
+    /** 温度安全范围钳制：-40..150°C，超界返回 null */
+    fun safeTemp(c: Double?): Double? = c?.takeIf { it in -40.0..150.0 }
+
+    /** 电流安全范围钳制：绝对值 ≤ 12A，超界返回 null */
+    fun safeCurrent(a: Double?): Double? = a?.takeIf { kotlin.math.abs(it) <= 12.0 }
+
+    /** 功率安全范围钳制：0..150W（展示用正值口径；带符号电池功率请用 abs ≤ 150 自行钳制），超界返回 null */
+    fun safePower(w: Double?): Double? = w?.takeIf { it in 0.0..150.0 }
 }

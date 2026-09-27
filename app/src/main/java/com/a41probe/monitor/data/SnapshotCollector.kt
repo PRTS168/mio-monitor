@@ -23,27 +23,51 @@ class SnapshotCollector(private val ctx: Context) {
         val now = System.currentTimeMillis()
         if (now - lastShizukuRefresh > 2000) {
             lastShizukuRefresh = now
-            ShizukuBridge.refresh()
+            if (!ShizukuBridge.refresh()) {
+                // v0.27.1: 探测失败 → 800ms 后立即重试（下一帧），不让失败状态粘住数帧
+                lastShizukuRefresh = now - 1200
+            }
         }
         return ShizukuBridge.active && ShizukuBridge.authorized
     }
 
-    fun collect(): Snapshot {
+    /**
+     * v0.27.0: App 域轻快照——只取 BatteryManager / meminfo 等 App 域即时数据（<100ms），
+     * 冷启动首帧先推给 UI，不等 Shizuku 绑定 / 串行 transact / dumpsys；
+     * 提权数据（CPU 占用 / 结温 / 热区）在首次完整 [collect] 后自然补上。
+     */
+    fun collectQuick(): Snapshot = runCatching {
+        val battery = BatteryReader.read(ctx, null, false)
+        Snapshot(
+            battery = battery,
+            memTotalMB = SysReader.memTotalMB(),
+            mem = SysReader.memInfo(),
+        )
+    }.getOrElse { Snapshot() }
+
+    fun collect(halSync: Boolean = false): Snapshot {
         val shizukuOn = shizukuOn()
         // Root 优先——root 可用则走 su 通道；无 root 再回落 Shizuku；都没有则 App 域
         val rootOn = RootBridge.available
         // v0.24: 统一提权执行器——root 用 su、否则 Shizuku 用 shell，null=纯 App 域。
-        // 让 Battery/Cpu/Gpu 三个 Reader 在 Shizuku 档也能读 Mali/MTK 等受保护节点；
-        // 此前它们只在 root 时提权，Shizuku 已授权却仍走 App 域，导致大量参数缺失（适配不足根因）。
         val priv: ((String) -> String?)? = when {
             rootOn -> { cmd -> RootBridge.exec(cmd) }
             shizukuOn -> { cmd -> ShizukuBridge.exec(cmd) }
             else -> null
         }
 
-        val battery = BatteryReader.read(ctx, priv, rootOn)
-        val cores = CpuReader.read(priv, rootOn)
-        val governor = CpuReader.governor()
+        // v0.27.0: 提权档先跑一次 bulk——一条 shell 同时拿 热区 / loadavg / stat / cooling
+        // 以及 8 核当前频率(cpuCurKHz)、power_supply 输入侧 V/I(psu)，每帧 transact 11+ → 1
+        var bulk: BulkReader.Bulk? = null
+        if (rootOn) {
+            bulk = BulkReader.readRoot()
+            if (bulk != null) RootBridge.noteExecOk() else RootBridge.noteExecFail()
+        }
+        if (bulk == null && shizukuOn) bulk = BulkReader.readShizuku()
+
+        // Reader 复用 bulk 已取回的数据（override），不再各自 priv transact
+        val battery = BatteryReader.read(ctx, priv, rootOn, psuOverride = bulk?.psu)
+        val cores = CpuReader.read(priv, rootOn, curOverride = bulk?.cpuCurKHz)
         var gpu = GpuReader.read(priv, rootOn)
 
         val thermalAll: List<ThermalZone>
@@ -53,35 +77,33 @@ class SnapshotCollector(private val ctx: Context) {
         var procStatRaw: String? = null
         var coreStatRaw: List<String> = emptyList()
 
-        // root 失败/失权自动回落 Shizuku，不互斥跳过
-        var bulk: BulkReader.Bulk? = null
-        if (rootOn) {
-            bulk = BulkReader.readRoot()
-            if (bulk != null) RootBridge.noteExecOk() else RootBridge.noteExecFail()
-        }
-        if (bulk == null && shizukuOn) {
-            bulk = BulkReader.readShizuku()
-        }
-        if (rootOn || shizukuOn) {
-            if (bulk != null) {
-                thermalAll = bulk.zones
-                load = bulk.load
-                cpuTotal = diffCpuTotal(bulk.stat)
-                perCore = diffCores(bulk.coreStats)
-                procStatRaw = bulk.stat
-                coreStatRaw = bulk.coreStats
-                gpu = gpu.copy(
-                    temp0C = bulk.zones.firstOrNull { it.name == "gpuss-0" }?.tempC,
-                    temp1C = bulk.zones.firstOrNull { it.name == "gpuss-1" }?.tempC,
-                    tempState = if (bulk.zones.any { it.name.startsWith("gpuss") })
-                        DataState.OK else DataState.NEED_PRIV,
-                )
-            } else {
-                thermalAll = emptyList()
-                load = null
-                cpuTotal = null
-                gpu = gpu.copy(temp0C = null, temp1C = null, tempState = DataState.NEED_PRIV)
+        if (bulk != null) {
+            // thermal glob 命中 0 区 / load 缺失时仍回退 App 域，不丢帧（P1-Data-1）
+            thermalAll = if (bulk.zones.isNotEmpty()) bulk.zones else ThermalReader.readAppDomain()
+            load = bulk.load ?: SysReader.loadAvgApp()
+            cpuTotal = diffCpuTotal(bulk.stat)
+            perCore = diffCores(bulk.coreStats)
+            procStatRaw = bulk.stat
+            coreStatRaw = bulk.coreStats
+            // v0.28.1: GPU 热区名/编号随平台而异（A41=gpuss-0/1；SM8750 等新平台可能是
+            // gpuss-N 或 gpu*），精确匹配 gpuss-0/1 在 iQOO 上一个都取不到 → GPU 页全空。
+            // 改为：过滤所有 GPU 热区、只留有有效读数者、按名排序取前两个。
+            val gpuZones = bulk.zones.filter {
+                val n = it.name.lowercase()
+                n.startsWith("gpuss") || n == "gpu" || n.startsWith("gpu")
+            }.mapNotNull { z -> Units.safeTemp(z.tempC)?.let { z } }.sortedBy { it.name }
+            val hasGpuZone = bulk.zones.any {
+                val n = it.name.lowercase(); n.startsWith("gpu")
             }
+            gpu = gpu.copy(
+                temp0C = gpuZones.getOrNull(0)?.tempC,
+                temp1C = gpuZones.getOrNull(1)?.tempC,
+                tempState = when {
+                    gpuZones.isNotEmpty() -> DataState.OK
+                    hasGpuZone -> DataState.NEED_PRIV
+                    else -> DataState.UNAVAILABLE
+                },
+            )
         } else {
             val now = System.currentTimeMillis()
             thermalAll = if (now < noPrivUntil) emptyList() else {
@@ -96,13 +118,18 @@ class SnapshotCollector(private val ctx: Context) {
         val memTotal = SysReader.memTotalMB()
         val memInfo = SysReader.memInfo()
 
-        // Thermal HAL 低频读取（ThermalHalReader 内部 5s 节流；仅提权档能跑 dumpsys）
+        // Thermal HAL：本机 UI 走 ViewModel 独立协程异步刷新（cachedOnly，dumpsys 不挡主帧）；
+        // Agent 被监控端(halSync=true)仍同步读取
         val halExec: (String) -> String? = when {
             rootOn -> { cmd -> RootBridge.exec(cmd) }
             shizukuOn -> { cmd -> ShizukuBridge.exec(cmd) }
             else -> { _ -> null }
         }
-        val hal = if (rootOn || shizukuOn) ThermalHalReader.get(halExec) else null
+        val hal = when {
+            rootOn || shizukuOn ->
+                if (halSync) ThermalHalReader.get(halExec) else ThermalHalReader.cachedOnly()
+            else -> null
+        }
 
         return Snapshot(
             battery = battery,
@@ -117,7 +144,7 @@ class SnapshotCollector(private val ctx: Context) {
             corePercent = perCore,
             procStat = procStatRaw,
             coreStat = coreStatRaw,
-            governor = governor,
+            governor = CpuReader.governor(),
             cooling = bulk?.cooling ?: emptyList(),
             halTemps = hal?.temps ?: emptyList(),
             thermalStatus = hal?.status,

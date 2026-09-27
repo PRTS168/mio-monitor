@@ -3,6 +3,9 @@ package com.a41probe.monitor.data.agent
 import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
+import android.app.job.JobInfo
+import android.app.job.JobScheduler
+import android.content.ComponentName
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
@@ -48,6 +51,7 @@ class AgentService : Service() {
     private var nsd: AgentNsd? = null
     private var collector: SnapshotCollector? = null
     @Volatile private var active = false
+    private var startedAt = 0L
     @Volatile private var shuttingDown = false
     private var nsdRegistered = false
     // P2-4: 首次采集完成后才允许发 hello，保证 hello 的 priv 不误报 FREE
@@ -129,6 +133,7 @@ class AgentService : Service() {
         server = srv
         val port = srv.localPort
         active = true
+        startedAt = System.currentTimeMillis()
 
         // accept 循环
         scope.launch {
@@ -149,7 +154,7 @@ class AgentService : Service() {
             while (active && isActive) {
                 val t0 = System.currentTimeMillis()
                 val snap = try {
-                    collector!!.collect()
+                    collector!!.collect(halSync = true)
                 } catch (t: Throwable) {
                     delay(500); continue
                 }
@@ -170,6 +175,10 @@ class AgentService : Service() {
         }
 
         applyLocks()
+        // v0.27.2: 记住开启状态（开机自启）+ JobScheduler 周期兜底
+        getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_AGENT_ON, true).apply()
+        scheduleKeepAlive()
     }
 
     private fun handleClient(socket: Socket) {
@@ -230,6 +239,9 @@ class AgentService : Service() {
         nsdRegistered = false
         runCatching { server?.close() }
         releaseLocks()
+        getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_AGENT_ON, false).apply()
+        cancelKeepAlive()
         scope.cancel()   // P1-1: 取消 accept/采集协程，避免泄漏
         AgentState.setRunning(false)
         AgentState.clearClients()
@@ -252,11 +264,11 @@ class AgentService : Service() {
             .getBoolean(KEY_KEEP_AWAKE, false)
         if (keep) {
             val pm = getSystemService(POWER_SERVICE) as PowerManager
-            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "A41Probe:agent").apply {
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Mio:agent").apply {
                 setReferenceCounted(false); acquire(LOCK_TIMEOUT)
             }
             val wm = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
-            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "A41Probe:wifi").apply {
+            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Mio:wifi").apply {
                 setReferenceCounted(false); acquire()
             }
         }
@@ -268,12 +280,33 @@ class AgentService : Service() {
         wakeLock = null; wifiLock = null
     }
 
+    // ---- JobScheduler 兜底 ----
+    private fun scheduleKeepAlive() {
+        runCatching {
+            val js = getSystemService(JOB_SCHEDULER_SERVICE) as JobScheduler
+            val job = JobInfo.Builder(
+                KEEP_JOB_ID, ComponentName(this, KeepAliveJobService::class.java),
+            )
+                .setPeriodic(15 * 60 * 1000L)
+                .setPersisted(true)
+                .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                .build()
+            js.schedule(job)
+        }
+    }
+
+    private fun cancelKeepAlive() {
+        runCatching {
+            (getSystemService(JOB_SCHEDULER_SERVICE) as JobScheduler).cancel(KEEP_JOB_ID)
+        }
+    }
+
     // ---- 通知 ----
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val ch = NotificationChannel(
-                CHANNEL_ID, "被监控服务", android.app.NotificationManager.IMPORTANCE_LOW,
-            ).apply { description = "A41 Probe 被监控模式常驻"; setShowBadge(false) }
+                CHANNEL_ID, "Mio 澪 · 被监控服务", android.app.NotificationManager.IMPORTANCE_LOW,
+            ).apply { description = "Mio 澪 被监控模式常驻"; setShowBadge(false) }
             val nm = getSystemService(android.app.NotificationManager::class.java)
             nm.createNotificationChannel(ch)
         }
@@ -302,13 +335,20 @@ class AgentService : Service() {
             },
             PendingIntent.FLAG_IMMUTABLE,
         )
-        val text = "权限档 ${priv.label} · ${clientCount} 台监控端连接"
+        val mins = if (startedAt > 0) (System.currentTimeMillis() - startedAt) / 60000 else 0
+        val text = "权限档 ${priv.label} · ${clientCount} 台监控端连接 · 已运行 ${mins} 分钟"
+        val stopPi = PendingIntent.getService(
+            this, 2,
+            Intent(this, AgentService::class.java).apply { action = ACTION_STOP },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("A41 Probe 被监控模式运行中")
+            .setContentTitle("Mio 澪 被监控模式运行中")
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_stat_agent)
             .setOngoing(true)
             .setContentIntent(pi)
+            .addAction(R.drawable.ic_stat_agent, "终止", stopPi)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
     }
@@ -321,6 +361,8 @@ class AgentService : Service() {
         private const val LOCK_TIMEOUT = 12 * 60 * 60 * 1000L  // 12h 安全上限，防泄漏
         const val PREFS = "a41_agent"
         const val KEY_KEEP_AWAKE = "keep_awake"
+        const val KEY_AGENT_ON = "agent_on"
+        private const val KEEP_JOB_ID = 4102
 
         fun start(ctx: Context) {
             val i = Intent(ctx, AgentService::class.java)

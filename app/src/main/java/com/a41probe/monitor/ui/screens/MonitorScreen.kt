@@ -1,5 +1,6 @@
 package com.a41probe.monitor.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
@@ -29,7 +31,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import com.a41probe.monitor.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -41,9 +46,10 @@ import com.a41probe.monitor.data.remote.PrivLevel
 import com.a41probe.monitor.data.remote.RemoteHalTemp
 import com.a41probe.monitor.data.remote.RemoteSnapshot
 import com.a41probe.monitor.ui.components.ProbeButton
-import com.a41probe.monitor.ui.components.ProbeCard
+import com.a41probe.monitor.ui.components.SafeCard
 import com.a41probe.monitor.ui.components.pressClick
 import com.a41probe.monitor.ui.theme.Ink
+import com.a41probe.monitor.ui.components.ScrollAware
 
 /** 监控端：多设备仪表盘。 */
 @Composable
@@ -59,7 +65,10 @@ fun MonitorScreen(
     val scanning by MonitorRepository.scanning.collectAsState()
     var showAdd by remember { mutableStateOf(false) }
 
+        val listState = rememberLazyListState()
+    ScrollAware(listState) {
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxWidth(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -77,7 +86,7 @@ fun MonitorScreen(
 
         // 扫描状态
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "扫描状态") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         Modifier.size(9.dp).clip(RoundedCornerShape(5.dp))
@@ -96,7 +105,19 @@ fun MonitorScreen(
 
         if (devices.isEmpty()) {
             item {
-                ProbeCard {
+                SafeCard(fallbackTitle = "设备列表") {
+                    // v0.26.4: 头部特写资源——空态卡内脸完整可读
+                    Box(
+                        Modifier.fillMaxWidth().height(128.dp).clip(RoundedCornerShape(14.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Image(
+                            painterResource(R.drawable.mio_expr_think_head),
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                     Text("尚未发现被监控设备", color = Ink.tx, fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(6.dp))
@@ -116,7 +137,8 @@ fun MonitorScreen(
         }
 
         item { Spacer(Modifier.height(8.dp)) }
-    }
+    
+    }}
 
     if (showAdd) {
         AddDeviceDialog(
@@ -141,7 +163,7 @@ private fun DeviceCard(
     val title = info?.model?.ifBlank { null } ?: e.host
     val soc = info?.soc?.ifBlank { null }
 
-    ProbeCard(modifier = Modifier.pressClick(onOpen)) {
+    SafeCard(modifier = Modifier.pressClick(onOpen), fallbackTitle = "设备详情") {
         // 头部
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(title, color = Ink.tx, fontSize = 16.sp,
@@ -172,7 +194,7 @@ private fun DeviceCard(
                 Spacer(Modifier.width(8.dp))
                 ProbeButton(text = "移除", onClick = onRemove)
             }
-            return@ProbeCard
+            return@SafeCard
         }
 
         // hero

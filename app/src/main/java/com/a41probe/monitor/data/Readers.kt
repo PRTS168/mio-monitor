@@ -14,9 +14,10 @@ import rikka.shizuku.ShizukuRemoteProcess
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
-private const val TAG = "A41Bridge"
+private const val TAG = "MioBridge"
 
 // M18: 顶层正则，避免热路径反复编译
 private val RE_DIGITS = Regex("\\d+")
@@ -41,6 +42,9 @@ object ShizukuBridge {
 
     @Volatile var active: Boolean = false; private set
     @Volatile var authorized: Boolean = false; private set
+    // v0.27.1: 探测失败连续计数——瞬时 ping 失败（Doze 唤醒/系统抖动）不立即翻转 active，
+    // 连续 2 次失败才判定掉线，避免"切前台闪需要授权"
+    @Volatile private var failStreak = 0
     // 收紧超时：shell 慢则快速降级置灰，避免 UI "滞后 3s+" 的卡顿感知
     private const val EXEC_TIMEOUT_MS = 2500L
     // M4: 有界守护线程池，防止无界增长拖住进程退出
@@ -51,12 +55,19 @@ object ShizukuBridge {
     private val liveProcs = java.util.concurrent.ConcurrentHashMap.newKeySet<ShizukuRemoteProcess>()
 
     fun refresh(): Boolean {
-        active = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
-        if (active) {
+        val ping = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
+        if (ping) {
+            active = true
             authorized = runCatching {
                 Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
             }.getOrDefault(false)
-        } else authorized = false
+            failStreak = 0
+        } else {
+            // 瞬时探测失败：保留旧状态（active/authorized 不动），连续 2 次失败才翻转
+            if (active) failStreak++
+            else failStreak = 0
+            if (failStreak >= 2) active = false
+        }
         return active
     }
 
@@ -236,7 +247,7 @@ object BatteryReader {
         tech = Sysfs.read("/sys/class/power_supply/battery/technology")
     }
 
-    fun read(context: Context, priv: ((String) -> String?)?, rootOn: Boolean): BatteryData {
+    fun read(context: Context, priv: ((String) -> String?)?, rootOn: Boolean, psuOverride: List<PsuLine>? = null): BatteryData {
         val cap = Sysfs.readInt("/sys/class/power_supply/battery/capacity")
         val status = Sysfs.read("/sys/class/power_supply/battery/status")
         val voltUv = Sysfs.readLong("/sys/class/power_supply/battery/voltage_now")
@@ -253,22 +264,60 @@ object BatteryReader {
         refreshFeatures()
         // 适配器输入侧功率（充电器实际输出）：usb / ucsi-source / adapter 多路径回退，
         // v20.12(S1-4): Root 通道 su 补读（App 域 EACCES、Shizuku 同样 EACCES，仅 Root 可读）
-        val input = readAdapterInput(priv)
+        val input = readAdapterInput(priv, psuOverride)
 
         // BatteryManager 双口径
         var tempBm: Double? = null
         var tempBmRaw: Int? = null
+        var bmStatus: String? = null
         var maxChargingCurUa: Long? = null
         var maxChargingVolUv: Long? = null
+        // v0.28.1: 标准广播完整兜底——vivo/OriginOS 等 SELinux 严格机型即使 sysfs 电池目录
+        // 全被挡，电量/电压/温度/健康/技术仍可从 ACTION_BATTERY_CHANGED 读出（免提权）
+        var bmLevel: Int? = null
+        var bmVoltMv: Int? = null
+        var bmHealth: String? = null
+        var bmTech: String? = null
         runCatching {
             val bm = context.getSystemService(BatteryManager::class.java)
             if (bm != null) {
                 val bi = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
                 if (bi != null) {
+                    // v0.26.7: 免提权状态兜底（sysfs status 不可读时仍能正确识别充满等状态）
+                    bmStatus = when (bi.getIntExtra(BatteryManager.EXTRA_STATUS, -1)) {
+                        BatteryManager.BATTERY_STATUS_CHARGING -> "Charging"
+                        BatteryManager.BATTERY_STATUS_DISCHARGING -> "Discharging"
+                        BatteryManager.BATTERY_STATUS_NOT_CHARGING -> "Not charging"
+                        BatteryManager.BATTERY_STATUS_FULL -> "Full"
+                        else -> null
+                    }
                     val t = bi.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1)
                     if (t != -1) {
                         tempBmRaw = t
                         tempBm = t / 10.0
+                    }
+                    // 电量百分比：EXTRA_LEVEL / EXTRA_SCALE（scale 通常 100）
+                    val lvl = bi.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                    val scale = bi.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+                    if (lvl >= 0 && scale > 0) {
+                        bmLevel = (lvl * 100 / scale)
+                    }
+                    // 电压：ACTION_BATTERY_CHANGED 的 "voltage" extra，单位 mV
+                    (bi.extras?.get("voltage") as? Number)?.toInt()
+                        ?.let { if (it > 0) bmVoltMv = it }
+                    // 技术
+                    bi.getStringExtra(BatteryManager.EXTRA_TECHNOLOGY)
+                        ?.takeIf { it.isNotBlank() }?.let { bmTech = it }
+                    // 健康：int 常量 → 与 sysfs health 同口径字符串
+                    bmHealth = when (bi.getIntExtra(BatteryManager.EXTRA_HEALTH, -1)) {
+                        BatteryManager.BATTERY_HEALTH_GOOD -> "Good"
+                        BatteryManager.BATTERY_HEALTH_OVERHEAT -> "Overheat"
+                        BatteryManager.BATTERY_HEALTH_DEAD -> "Dead"
+                        BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> "Over voltage"
+                        BatteryManager.BATTERY_HEALTH_COLD -> "Cold"
+                        BatteryManager.BATTERY_HEALTH_UNSPECIFIED_FAILURE -> "Unspecified failure"
+                        BatteryManager.BATTERY_HEALTH_UNKNOWN -> "Unknown"
+                        else -> null
                     }
                     // v20.24: 协商充电上限（µA/µV），免提权可读
                     // 修复：固件可能以 int 或 long 写入。getLongExtra 遇到 int 存储会刷
@@ -282,21 +331,23 @@ object BatteryReader {
             }
         }
 
-        val state = if (cap == null) DataState.UNAVAILABLE else DataState.OK
+        val finalCap = cap ?: bmLevel
+        val state = if (finalCap == null) DataState.UNAVAILABLE else DataState.OK
         return BatteryData(
-            capacity = cap,
-            voltage = mainVoltUv?.div(1_000_000.0),
-            currentA = mainCurUa?.div(1_000_000.0),
-            powerW = powerUw?.div(1_000_000.0),
-            tempC = tempRaw?.div(10.0),
+            capacity = finalCap,
+            // v0.28.2: 构造时物理范围钳制（脏节点超界→null，不污染 UI/曲线；RAW 字段仍存原值）
+            voltage = Units.safeVoltage(mainVoltUv?.div(1_000_000.0) ?: bmVoltMv?.div(1000.0)),
+            currentA = Units.safeCurrent(mainCurUa?.div(1_000_000.0)),
+            powerW = powerUw?.div(1_000_000.0)?.takeIf { kotlin.math.abs(it) <= 150.0 },
+            tempC = Units.safeTemp(tempRaw?.div(10.0) ?: tempBm),
             tempBmC = tempBm,
             tempBmRaw = tempBmRaw,
             chargeFull = full,
             chargeDesign = design,
             cycleCount = cycle,
-            health = health,
-            status = status,
-            tech = tech,
+            health = health ?: bmHealth,
+            status = status ?: bmStatus,
+            tech = tech ?: bmTech,
             chargeType = chargeType,
             inputVoltV = input?.voltV,
             inputCurA = input?.curA,
@@ -349,28 +400,33 @@ object BatteryReader {
 
     /** 读取充电器输入侧 V×A（μV/μA→V/A），多路径回退；rootOn 时 su 补读；
      *  读不到=未提权或机型无此节点 */
-    private fun readAdapterInput(priv: ((String) -> String?)?): AdapterInput? {
-        // 枚举 /sys/class/power_supply/* 输入侧节点（不写死 usb/ucsi/adapter 三个 dir）；
-        // type 含 USB/DCP/CDP/Wireless/Mains 视为输入侧（排除 Battery）；读 voltage_now+current_now（µV/µA），
-        // 回落 input_voltage_now/input_current_now（UCSI 节点）。rootOn 时 su 补读。
-        val dirs = File("/sys/class/power_supply").listFiles()?.map { it.path } ?: return null
-        for (dir in dirs) {
-            val type = Sysfs.read("$dir/type") ?: continue
+    private fun readAdapterInput(priv: ((String) -> String?)?, psuOverride: List<PsuLine>?): AdapterInput? {
+        // v0.27.0: 优先用 bulk 一次取回的 PsuLine（零额外 transact）；无 bulk（App 域/旧路径）再本地枚举
+        val entries: List<PsuLine> = psuOverride ?: run {
+            File("/sys/class/power_supply").listFiles()?.map { d ->
+                fun rl(n: String) = priv?.invoke("cat ${d.path}/$n 2>/dev/null")?.trim()?.toLongOrNull()
+                    ?: Sysfs.readLong("${d.path}/$n")
+                PsuLine(d.name, Sysfs.read("${d.path}/type") ?: "",
+                    rl("voltage_now"), rl("current_now"),
+                    rl("input_voltage_now"), rl("input_current_now"))
+            } ?: return null
+        }
+        for (e in entries) {
+            val type = e.type
             if (type.equals("Battery", ignoreCase = true)) continue
             val isInput = type.contains("USB", true) || type.contains("DCP", true) ||
                 type.contains("CDP", true) || type.contains("Wireless", true) || type.contains("Mains", true)
             if (!isInput) continue
-            fun rd(node: String): Long? =
-                priv?.invoke("cat $dir/$node 2>/dev/null")?.trim()?.toLongOrNull()
-                    ?: Sysfs.readLong("$dir/$node")
-            val vUv = rd("voltage_now") ?: rd("input_voltage_now")
-            val cUa = rd("current_now") ?: rd("input_current_now")
+            val vUv = e.vNow ?: e.ivNow
+            val cUa = e.cNow ?: e.icNow
             if (vUv != null && cUa != null && vUv > 0 && cUa > 0) {
                 // v0.23.0: 输入侧单位阈值归一化（电压 >100_000→µV÷1e6 否则 mV÷1e3；
                 // 电流 >10_000→µA÷1e6 否则 mA÷1e3）。RAW 字段 voltUv/curUa 仍存原始值。
                 val v = Units.voltageV(vUv)
                 val c = Units.currentA(cUa)
-                if (v != null && c != null)
+                // v0.26.4: 物理范围校验——手机充电输入 V∈(0.5,25]、I∈(0,15]，
+                // 厂商脏节点（实测 30V·5.2A→155.6W）跳过并回退下一输入节点
+                if (v != null && c != null && v in 0.5..25.0 && c in 0.0..15.0)
                     return AdapterInput(v, c, vUv, cUa)
             }
         }
@@ -384,7 +440,7 @@ object CpuReader {
     // M15: 从 possible 位图解析核数，不写死 8
     private val possibleCores: List<Int> by lazy {
         val s = Sysfs.read("/sys/devices/system/cpu/possible") ?: "0-7"
-        s.split(",").flatMap { part ->
+        val parsed = s.split(",").flatMap { part ->
             val r = part.split("-")
             if (r.size == 2) {
                 val a = r[0].toIntOrNull() ?: return@flatMap emptyList()
@@ -392,14 +448,20 @@ object CpuReader {
                 (a..b).toList()
             } else listOfNotNull(part.toIntOrNull())
         }
+        // v0.28.2: 手机极限核数保护——异常固件 possible 位图 >16 核时截断到 16，
+        // 避免对不存在的 cpuN 做空读（16 核已远超当前手机上限）
+        if (parsed.size > 16) {
+            if (BuildConfig.DEBUG) Log.w(TAG, "possibleCores=${parsed.size} exceeds phone limit 16, truncating")
+            parsed.take(16)
+        } else parsed
     }
 
     // M19: scaling_max_freq 接近 boot 恒定，60s 缓存一次
-    private val maxCache = HashMap<Int, Int?>()
-    private val maxRawCache = HashMap<Int, Int?>()
-    private val maxCacheAt = HashMap<Int, Long>()
+    private val maxCache = ConcurrentHashMap<Int, Int?>()
+    private val maxRawCache = ConcurrentHashMap<Int, Int?>()
+    private val maxCacheAt = ConcurrentHashMap<Int, Long>()
 
-    fun read(priv: ((String) -> String?)?, rootOn: Boolean): List<CpuCore> = possibleCores.map { i ->
+    fun read(priv: ((String) -> String?)?, rootOn: Boolean, curOverride: Map<Int, Int>? = null): List<CpuCore> = possibleCores.map { i ->
         val base = "/sys/devices/system/cpu/cpu$i/cpufreq"
         val now = System.currentTimeMillis()
         val max = if (now - (maxCacheAt[i] ?: 0L) > 60_000) {
@@ -421,7 +483,7 @@ object CpuReader {
                 maxCache[i]   // 块返回 Int?（赋值语句返回 Unit，不写会让 max 推断成 Any?）
             }
         } else maxCache[i]
-        var curKHz = Sysfs.readInt("$base/scaling_cur_freq")
+        var curKHz = curOverride?.get(i) ?: Sysfs.readInt("$base/scaling_cur_freq")
         // v0.24: App 域读不到当前频率时用提权补读（MTK/其他平台 shell 可读）
         if (curKHz == null && priv != null) {
             curKHz = priv("cat $base/scaling_cur_freq 2>/dev/null")?.trim()?.toIntOrNull()
@@ -449,6 +511,7 @@ object GpuReader {
     // O4: 基线有意跨采样循环保留，进程内仅单循环使用
     private var lastBusy: Long? = null
     private var lastIdle: Long? = null
+    private val gpuLock = Any()
 
     fun read(priv: ((String) -> String?)?, rootOn: Boolean): GpuData {
         // 主通道：gpu_busy_percentage（A41 App 域实测可读；输出可能为 "2" 或 "2 %"，提取首个整数）
@@ -463,18 +526,20 @@ object GpuReader {
                 val b = raw[0].toLongOrNull()
                 val i = raw[1].toLongOrNull()
                 if (b != null && i != null) {
-                    val pb = lastBusy
-                    val pi = lastIdle
-                    lastBusy = b
-                    lastIdle = i
-                    if (pb != null && pi != null && b >= pb && i >= pi) {
-                        val dB = b - pb
-                        val dI = i - pi
-                        // M8(UX): 周期内无计数（GPU 深度休眠）返回 null → 曲线断点，
-                        // 不再画贴底 0% 直线让用户误以为"GPU 真空闲/采样停了"
-                        busyPercent = if (dB + dI > 0) (dB * 100.0 / (dB + dI)).toInt() else null
+                    synchronized(gpuLock) {
+                        val pb = lastBusy
+                        val pi = lastIdle
+                        lastBusy = b
+                        lastIdle = i
+                        if (pb != null && pi != null && b >= pb && i >= pi) {
+                            val dB = b - pb
+                            val dI = i - pi
+                            // M8(UX): 周期内无计数（GPU 深度休眠）返回 null → 曲线断点，
+                            // 不再画贴底 0% 直线让用户误以为"GPU 真空闲/采样停了"
+                            busyPercent = if (dB + dI > 0) (dB * 100.0 / (dB + dI)).toInt() else null
+                        }
+                        // 首次采样无基线 → 保持 null，由 UI 置灰
                     }
-                    // 首次采样无基线 → 保持 null，由 UI 置灰
                 }
             }
         }
@@ -496,6 +561,28 @@ object GpuReader {
                 ?: priv?.invoke("cat /sys/module/ged/parameters/gpu_idle 2>/dev/null"))
                 ?.let { RE_DIGITS.find(it)?.value?.toIntOrNull() }
             if (idle != null && idle in 0..100) busyPercent = (100 - idle).coerceIn(0, 100)
+        }
+        // 备选⑥：devfreq load 通道（Exynos/通用）——/sys/class/devfreq/*/load。
+        // 兼容两种格式：单列=直接百分比；双列 "busy total"=busy/total 比率。
+        if (busyPercent == null) {
+            val gpuDev = File("/sys/class/devfreq").listFiles()
+                ?.firstOrNull { gpuDevfreqName(it.name) }
+            if (gpuDev != null) {
+                val loadRaw = Sysfs.read("${gpuDev.path}/load")
+                    ?: priv?.invoke("cat ${gpuDev.path}/load 2>/dev/null")
+                val parts = loadRaw?.split(RE_WS)?.filter { it.isNotEmpty() }
+                if (!parts.isNullOrEmpty()) {
+                    busyPercent = when {
+                        parts.size >= 2 -> {
+                            val b = parts[0].toLongOrNull()
+                            val t = parts[1].toLongOrNull()
+                            if (b != null && t != null && t > 0)
+                                (b * 100 / t).toInt().coerceIn(0, 100) else null
+                        }
+                        else -> parts[0].toIntOrNull()?.coerceIn(0, 100)
+                    }
+                }
+            }
         }
         // 都缺则 busyPercent 保持 null，UI 置「–」
         // GPU 频率：节点命名随内核而异（gpuclk/gpu_clk/gpu_clock，单位多为 Hz 亦可能 kHz），
@@ -597,13 +684,14 @@ object GpuReader {
             ?.firstOrNull()
     }
 
-    /** raw 按 Hz 解释；结果过小（<1MHz）再按 kHz 解释一次，兼容两种单位。 */
-    private fun freqFromRaw(raw: Long): Int? {
-        val asHz = (raw / 1_000_000).toInt()
-        if (asHz in 1..9_999) return asHz
-        val asKHz = (raw / 1_000).toInt()
-        return if (asKHz in 1..9_999) asKHz else null
-    }
+    /** raw 量级归一化：≥1e7 视为 Hz（如 585_000_000→585）；≥1e3 视为 kHz（585_000→585；
+     *  1_200_000→1200，修复 ≥1GHz kHz 值被误读为 1–2MHz）；<1e3 视为已 MHz。
+     *  GPU 频率真实范围 ~200MHz–3GHz：Hz 表示 ≥2e8，kHz 表示 ≤3e6，1e7 阈值稳分。 */
+    private fun freqFromRaw(raw: Long): Int? = when {
+        raw >= 10_000_000 -> (raw / 1_000_000).toInt()
+        raw >= 1_000 -> (raw / 1_000).toInt()
+        else -> raw.toInt()
+    }.takeIf { it in 1..9_999 }
 
     /** 老 MTK gpufreq_var_dump 多行文本：优先含 cur/current 的行，否则首个数字行，提取首个整数(kHz)→MHz */
     private fun parseMtkGpufreqVar(text: String): Int? {
@@ -637,8 +725,10 @@ object ThermalReader {
         val zones = zoneNames(root)
         return zones.map { z ->
             val v = Sysfs.readInt("$root/thermal_zone${z.first}/temp")
-            ThermalZone(z.first, z.second, v?.div(1000.0),
-                if (v != null) DataState.OK else DataState.NEED_PRIV, Priv.SHIZUKU, tempMC = v)
+            // v0.28.2: 物理范围钳制 -40..150°C，超界 → tempC=null（占位 NEED_PRIV），raw m°C 仍留证
+            val tc = Units.safeTemp(v?.div(1000.0))
+            ThermalZone(z.first, z.second, tc,
+                if (tc != null) DataState.OK else DataState.NEED_PRIV, Priv.SHIZUKU, tempMC = v)
         }
     }
 
@@ -665,6 +755,16 @@ object ThermalReader {
             .sortedByDescending { it.tempC }.take(n)
 }
 
+/** v0.27.0: power_supply 输入侧一行（bulk 一次取回，供 BatteryReader 解析，替代逐节点 priv cat） */
+data class PsuLine(
+    val dir: String,
+    val type: String,
+    val vNow: Long?,
+    val cNow: Long?,
+    val ivNow: Long?,
+    val icNow: Long?,
+)
+
 /** Shizuku 批量采集（S6）：一次 shell 调用拿 热区 + loadavg + /proc/stat，每秒 fork 数 4→1。
  *  zone type 恒定只首读一次缓存，每秒命令只读 temp（cat 次数 ~170→~88），显著降低单次采样耗时。 */
 object BulkReader {
@@ -675,16 +775,21 @@ object BulkReader {
         val stat: String?,
         val coreStats: List<String> = emptyList(),
         val cooling: List<CoolingDev> = emptyList(),
+        // v0.27.0: 8 核当前频率 kHz（一次 bulk，替代每核一次 transact）
+        val cpuCurKHz: Map<Int, Int> = emptyMap(),
+        // v0.27.0: power_supply 输入侧 V/I（一次 bulk，替代逐目录 priv cat）
+        val psu: List<PsuLine> = emptyList(),
     )
 
     @Volatile private var zoneTypes: Map<Int, String>? = null
     @Volatile private var coolingMeta: Map<Int, Pair<String, Int>>? = null
 
+    // v0.27.2: grep 多文件一次 fork（原循环 ~170 fork，首读 2s+）
     private val ZONE_TYPE_CMD =
-        "for z in /sys/class/thermal/thermal_zone*; do echo \"\${z##*thermal_zone}|\$(cat \$z/type 2>/dev/null)\"; done"
+        "grep -H \"\" /sys/class/thermal/thermal_zone*/type 2>/dev/null"
     private val COOLING_SCAN_CMD =
-        "for c in /sys/class/thermal/cooling_device*; do " +
-        "echo \"\${c##*cooling_device}|\$(cat \$c/type 2>/dev/null)|\$(cat \$c/max_state 2>/dev/null)\"; done"
+        "echo \"==TYPES==\"; grep -H \"\" /sys/class/thermal/cooling_device*/type 2>/dev/null; " +
+        "echo \"==MAXS==\"; grep -H \"\" /sys/class/thermal/cooling_device*/max_state 2>/dev/null"
 
     // 关键热缓解部件白名单：模式匹配（多厂商 cooling_device type），只对这些每秒读 cur_state
     // （其余大量 modem/PA 255 级不每秒读）。高频项保留快速匹配，其余按 contains 模式。
@@ -701,6 +806,25 @@ object BulkReader {
             type.contains("kgsl") ||
             type.contains("mtk-cpufreq") || type.contains("mtk-")
 
+    /** PSU uevent 多行累积器：一次 cat uevent 拿全部键，替代 6 次逐文件 cat */
+    private class MPsu(val dir: String, val type: String) {
+        var vNow: Long? = null; var cNow: Long? = null
+        var ivNow: Long? = null; var icNow: Long? = null
+        fun consume(line: String) {
+            val eq = line.indexOf('=')
+            if (eq <= 0) return
+            val key = line.substring(0, eq)
+            val v = line.substring(eq + 1).trim().toLongOrNull() ?: return
+            when (key) {
+                "POWER_SUPPLY_VOLTAGE_NOW" -> vNow = v
+                "POWER_SUPPLY_CURRENT_NOW" -> cNow = v
+                "POWER_SUPPLY_INPUT_VOLTAGE_NOW" -> ivNow = v
+                "POWER_SUPPLY_INPUT_CURRENT_NOW" -> icNow = v
+            }
+        }
+        fun build() = PsuLine(dir, type, vNow, cNow, ivNow, icNow)
+    }
+
     fun readShizuku(): Bulk? = readWith { ShizukuBridge.exec(it) }
     fun readRoot(): Bulk? = readWith { RootBridge.exec(it) }
 
@@ -709,35 +833,49 @@ object BulkReader {
         if (zoneTypes == null) {
             val out = exec(ZONE_TYPE_CMD)
             val parsed = out?.lines()?.mapNotNull { l ->
-                val p = l.split("|")
-                if (p.size == 2) p[0].toIntOrNull()?.let { it to p[1] } else null
+                // /sys/class/thermal/thermal_zone12/type:cpu-thermal
+                val id = l.substringAfter("thermal_zone").substringBefore("/").toIntOrNull()
+                    ?: return@mapNotNull null
+                val v = l.substringAfterLast(":").trim()
+                if (v.isEmpty()) null else id to v
             }?.toMap()
-            // P2: 空串/异常解析出空 Map 时不缓存（否则烤死为空、永不重试），本次放弃等下拍
             if (parsed.isNullOrEmpty()) return null
             zoneTypes = parsed
         }
-        // 首读：cooling 元数据（type/max 恒定，缓存）
         if (coolingMeta == null) {
             val out = exec(COOLING_SCAN_CMD)
-            val parsed = out?.lines()?.mapNotNull { l ->
-                val p = l.split("|")
-                if (p.size >= 3) {
-                    val id = p[0].toIntOrNull() ?: return@mapNotNull null
-                    val type = p[1]
-                    val max = p[2].toIntOrNull() ?: -1
-                    id to (type to max)
-                } else null
-            }?.toMap()
-            // P2-2: 空串解析为空 Map 不能烤死（非 null 会永不重试）；仅拿到内容才缓存
-            if (!parsed.isNullOrEmpty()) coolingMeta = parsed
+            val tmap = HashMap<Int, String>()
+            val mmax = HashMap<Int, Int>()
+            var cm = 0
+            out?.lines()?.forEach { l ->
+                when {
+                    l == "==TYPES==" -> cm = 1
+                    l == "==MAXS==" -> cm = 2
+                    cm == 1 -> {
+                        val id = l.substringAfter("cooling_device").substringBefore("/")
+                            .toIntOrNull() ?: return@forEach
+                        val v = l.substringAfterLast(":").trim()
+                        if (v.isNotEmpty()) tmap[id] = v
+                    }
+                    cm == 2 -> {
+                        val id = l.substringAfter("cooling_device").substringBefore("/")
+                            .toIntOrNull() ?: return@forEach
+                        l.substringAfterLast(":").trim().toIntOrNull()?.let { mmax[id] = it }
+                    }
+                }
+            }
+            if (tmap.isNotEmpty()) {
+                coolingMeta = tmap.mapValues { (id, t) -> t to (mmax[id] ?: -1) }
+            }
         }
         val types = zoneTypes ?: return null
         val meta = coolingMeta ?: emptyMap()
         val coolIds = meta.filter { isCoolingRelevant(it.value.first) }.keys.sorted()
 
         // 每秒命令：zone temp + load + stat + 白名单 cooling cur（同一 shell 调用，不额外 fork）
+        // v0.27.2: grep 合并多文件，fork 250+ → ~20，bulk 2.0s → 0.45s
         val sb = StringBuilder("{")
-        sb.append(" for z in /sys/class/thermal/thermal_zone*; do echo \"\${z##*thermal_zone}|\$(cat \$z/temp 2>/dev/null)\"; done;")
+        sb.append(" grep -H \"\" /sys/class/thermal/thermal_zone*/temp 2>/dev/null;")
         sb.append(" echo \"==LOAD==\"; cat /proc/loadavg;")
         sb.append(" echo \"==STAT==\"; grep -E \"^cpu[0-9]* \" /proc/stat;")
         if (coolIds.isNotEmpty()) {
@@ -746,6 +884,8 @@ object BulkReader {
                 sb.append(" echo \"$cid|\$(cat /sys/class/thermal/cooling_device$cid/cur_state 2>/dev/null)\";")
             }
         }
+        sb.append(" echo \"==CPUFREQ==\"; grep -H \"\" /sys/devices/system/cpu/cpu[0-9]/cpufreq/scaling_cur_freq /sys/devices/system/cpu/cpu[1-9][0-9]/cpufreq/scaling_cur_freq 2>/dev/null;")
+        sb.append(" echo \"==PSU==\"; for d in /sys/class/power_supply/*; do echo \"\${d##*/}|\$(cat \$d/type 2>/dev/null)|\$(cat \$d/uevent 2>/dev/null)\"; done;")
         sb.append(" }")
         val out = exec(sb.toString()) ?: return null
         return parseBulk(out, types, meta, coolIds)
@@ -760,23 +900,28 @@ object BulkReader {
         var stat: String? = null
         val coreStats = mutableListOf<String>()
         val cooling = mutableListOf<CoolingDev>()
+        val cpuCur = HashMap<Int, Int>()
+        val psu = mutableListOf<PsuLine>()
         var mode = 1
+        var curPsu: MPsu? = null
         out.lines().forEach { l ->
             when {
                 l == "==LOAD==" -> mode = 2
                 l == "==STAT==" -> mode = 3
                 l == "==COOL==" -> mode = 4
+                l == "==CPUFREQ==" -> mode = 5
+                l == "==PSU==" -> mode = 6
                 mode == 1 -> {
-                    val p = l.split("|")
-                    if (p.size >= 2) {
-                        val id = p[0].toIntOrNull()
-                        val v = p[1].toIntOrNull()
-                        val name = types[id]
-                        if (id != null && name != null) {
-                            zones.add(ThermalZone(id, name, v?.div(1000.0),
-                                if (v != null) DataState.OK else DataState.UNAVAILABLE,
-                                Priv.SHIZUKU, tempMC = v))
-                        }
+                    // /sys/class/thermal/thermal_zone12/temp:44500
+                    val id = l.substringAfter("thermal_zone").substringBefore("/").toIntOrNull()
+                    val v = l.substringAfterLast(":").trim().toIntOrNull()
+                    val name = types[id]
+                    if (id != null && name != null) {
+                        // v0.28.2: 物理范围钳制 -40..150°C，超界 → tempC=null（UNAVAILABLE），raw m°C 仍留证
+                        val tc = Units.safeTemp(v?.div(1000.0))
+                        zones.add(ThermalZone(id, name, tc,
+                            if (tc != null) DataState.OK else DataState.UNAVAILABLE,
+                            Priv.SHIZUKU, tempMC = v))
                     }
                 }
                 mode == 2 -> if (l.isNotBlank()) load = l.trim()
@@ -796,10 +941,29 @@ object BulkReader {
                         }
                     }
                 }
+                mode == 5 -> {
+                    // /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq:1689600
+                    val id = l.substringAfter("/cpu").substringBefore("/").toIntOrNull()
+                    val v = l.substringAfterLast(":").trim().toIntOrNull()
+                    if (id != null && v != null) cpuCur[id] = v
+                }
+                mode == 6 -> {
+                    if (l.startsWith("POWER_SUPPLY_")) {
+                        curPsu?.consume(l)
+                    } else {
+                        curPsu?.let { psu.add(it.build()) }
+                        val p = l.split("|")
+                        if (p.size >= 2) {
+                            curPsu = MPsu(p[0], p[1])
+                            p.drop(2).forEach { curPsu?.consume(it) }
+                        }
+                    }
+                }
             }
         }
+        curPsu?.let { psu.add(it.build()) }
         if (zones.isEmpty() && load == null && stat == null) return null
-        return Bulk(zones.sortedBy { it.id }, load, stat, coreStats, cooling)
+        return Bulk(zones.sortedBy { it.id }, load, stat, coreStats, cooling, cpuCur, psu)
     }
 }
 
@@ -815,6 +979,9 @@ object ThermalHalReader {
 
     @Volatile private var lastAt = 0L
     @Volatile private var cached: HalData? = null
+
+    /** v0.27.0: 只读缓存（主采样热路径调用，不触发 dumpsys）；刷新由 ViewModel 独立协程负责 */
+    fun cachedOnly(): HalData? = cached
 
     fun get(exec: (String) -> String?, force: Boolean = false): HalData? {
         val now = System.currentTimeMillis()

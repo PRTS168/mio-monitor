@@ -1,191 +1,162 @@
 <div align="center">
 
-# A41 Probe
+# Mio 澪
 
-### 清新、克制、工具感的安卓硬件参数性能监控
+### 一部手机的硬件控制台
 
-像电脑「任务管理器」一样，实时看懂手机的 CPU、GPU、电池、温度与传感器。
-**纯只读 · 免提权即可用 · 支持局域网多设备监控**
-
-<br/>
-
-![Android](https://img.shields.io/badge/Android-8.0%2B-34A853?logo=android&logoColor=white)
-![Kotlin](https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?logo=kotlin&logoColor=white)
-![Version](https://img.shields.io/badge/version-v0.24.0-007AFF)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Mode](https://img.shields.io/badge/只读-不写系统-orange)
+实时看懂 CPU、GPU、电池、温度与传感器 —— 像电脑「任务管理器」一样直观。
+**纯只读 · 免 root · 免提权即可用 · 局域网多设备监控**
 
 <br/>
 
-<img src="docs/screenshots/01-dashboard.png" width="300" />
+![Version](https://img.shields.io/badge/version-v1.0-007AFF)
+![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)
+![Kotlin](https://img.shields.io/badge/Kotlin-2.0-7F52FF?logo=kotlin&logoColor=white)
+![Compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?logo=jetpackcompose&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-blue)
+![Readonly](https://img.shields.io/badge/%E5%8F%AA%E8%AF%BB-%E4%B8%8D%E5%86%99%E7%B3%BB%E7%BB%9F%E8%8A%82%E7%82%B9-orange)
 
 </div>
 
 ---
 
-## 截图预览
+## 截图
 
-<p align="center">
-  <img src="docs/screenshots/01-dashboard.png" width="225" />
-  <img src="docs/screenshots/02-cpu.png" width="225" />
-  <img src="docs/screenshots/03-gpu.png" width="225" />
-</p>
-<p align="center">
-  <img src="docs/screenshots/04-battery.png" width="225" />
-  <img src="docs/screenshots/05-thermal.png" width="225" />
-  <img src="docs/screenshots/06-monitor.png" width="225" />
-</p>
-<p align="center">
-  <img src="docs/screenshots/07-remote-detail.png" width="225" />
-</p>
+<div align="center">
+
+| 仪表盘 | CPU | GPU |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/01-dashboard.png" width="230"/> | <img src="docs/screenshots/02-cpu.png" width="230"/> | <img src="docs/screenshots/03-gpu.png" width="230"/> |
+
+| 电池 | 温度与散热 | 设置 |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/04-battery.png" width="230"/> | <img src="docs/screenshots/05-thermal.png" width="230"/> | <img src="docs/screenshots/06-settings.png" width="230"/> |
+
+*真机实拍：中兴天机 A41 Ultra（骁龙 8 Gen1 / Adreno 730）*
+
+</div>
 
 ---
 
-## 功能总览
+## 它能给你什么
 
-### 仪表盘
-- CPU 总占用、最高结温两大核心数字，一眼抓住重点
-- CPU 占用近 60 秒实时面积曲线（`/proc/stat` 差分）
-- 全部核心实时频率：按簇着色的进度条 + 频率数值
-- 电池大卡：电量环、充/放电状态、电压、电流、`V×I` 功率、健康度 / 满充容量 / 循环次数
-- GPU 占用、内存（可用 / 总量 + Swap 占用条）、电池温度
+- **一台随身硬件控制台**：不用连电脑、不用 root、不用 Xposed，打开就看到这颗 SoC 此刻在干什么。
+- **能读到的都读出来**：CPU 每核频率与占用、GPU 占用与频率、电池电压/电流/功率/健康度、几十路热区温度与热缓解动作、内存与传感器。
+- **看得懂**：浅色 iOS 风格、卡片分组、曲线与数字同源同口径；读不到就显示「–」，**绝不用 0 伪装**。
+- **两台手机当一块屏用**：局域网双模式，一台当被监控端、一台当监控端，多设备同屏观察。
 
-### CPU
-- 总占用大数字 + 实时曲线
-- 每核频率卡片（含迷你趋势线），按簇着色
-- 分核占用网格
-- 档位驻留（`time_in_state`）归一化柱状图，当前档位高亮
-- 调度信息：governor、各簇频率上限、降频 / 限频事件
+---
 
-### GPU
-- 使用率大数字 + 实时曲线（内核上报）
-- GPU 频率：多节点回退探测（高通 kgsl / Mali / MTK / devfreq）
-- GPU 核心 0 / 1 独立温度
-- GPU 温度曲线
+## 功能一览
 
-### 电池
-- 充电 / 放电状态、电压、电流、功率（带符号）
-- 功率曲线（当前值 / 均值虚线）
-- 电压、电流双曲线（固定量程，快充峰值不截顶）
-- 电池温度曲线
-- 详情：健康状态、设计 / 满充容量、循环次数、充电类型（快充 / 标准 / 涓流）、电池技术
-- 24 小时容量趋势
+### 本机监控
 
-### 温度与散热
-- 最高结温、全温区平均值
-- 外壳侧温度（skin 热敏电阻，对应真实手感）
-- 距降频红线：Thermal HAL 各部件（外壳 / CPU / NPU / GPU / 电池）当前值与官方降频阈值
-- 热缓解动作：各 cooling 节点限频档位实时展示
+| 模块 | 内容 |
+|---|---|
+| **CPU** | 每核当前/最高频率、动态分簇（超大核/性能核/能效核四色角色）、每核占用、总占用曲线、频率档位驻留（time_in_state）、governor 与各簇限频、loadavg |
+| **GPU** | 占用曲线、频率（MHz）、GPU 核心温度；高通 Adreno / Mali / 联发科 GED 多平台自动识别 |
+| **电池** | 电量环、充放电状态、电压/电流/功率（充电时优先取**适配器输入侧**口径）、充电器协商上限、健康度/设计容量/学习容量/循环次数/OCV/截止电压/充入电量/限流档位、24h 容量趋势、预计充满/续航估算 |
+| **温度与散热** | 最高结温 / 平均 / 外壳温度、**距温度红线**、热缓解动作（cooling device，默认只列已触发项，可展开全部）、按 CPU / GPU·NPU·内存 / 射频·充电·外壳 三分组的热区列表、84 格热图 |
+| **内存** | 总量 / 可用 / 已用 / 缓存 / Swap，进度条与数值 |
+| **传感器** | 加速度、陀螺仪、磁力计、光线、距离等真实物理量 + 全部传感器清单 |
+| **Thermal HAL** | 经 `dumpsys thermalservice` 读取 HAL 分类温度（CPU/GPU/电池/外壳/电压/电流/电量/NPU）、热状态等级与降频阈值 |
 
-### 传感器
-- 加速度、陀螺仪、磁力、光线、距离等实时通道多轴数值
-- 全部传感器清单（名称 / 厂商 / 类型）
+### 局域网双模式（两部手机）
+
+- **被监控端**：前台服务 1s 采集、mDNS 自动广播、向监控端推送；常驻通知 + 开机自启 + JobScheduler 兜底 + 厂商保活引导（OPPO / vivo / 小米 / 华为 / 三星 逐项跳转）。
+- **监控端**：自动发现并连接，可同时看多台设备；设备卡片含 CPU 各核频率、结温、电量、HAL 分类温度、电池、内存 / GPU / 充电；可下钻单设备详情页看历史曲线。
+- **协议**：TCP + 4 字节长度前缀 + UTF-8 JSON，字段向后兼容。
+- **隐私**：只在局域网内点对点传输，**不经过任何外部服务器**。
+
+### 显示与交互
+
+- **玻璃效果三档**：`完整`（半透明 + 顶部高光 + 光泽柔化，Android 12+ 走 RenderEffect）/ `简约`（更实、少一层叠加）/ `关闭`（全实色卡片）。切换立即生效。
+- **触感反馈**：底部 Tab 与卡片按下均有震动；**触感强度 轻 / 中 / 重** 可调；**按住「轻/中/重」任意一键会一直震、松手即停**，可当场比对手感。
+- **统一动效**：单一缓动曲线 + 时长令牌（按下 130ms / 松开 240ms / Tab 指示器 280ms / 数字 320ms）；Tab 指示器平滑滑动，页面淡入淡出。
+- **按压反馈**：卡片按下轻微收缩 + 阴影下沉 + 透明度下沉，抬起平滑恢复；**文字与图表始终在最上层，永不被模糊或扭曲**。
+- **数值平滑**：CPU 占用、温度、内存、GPU 等数值插值滚动，避免每秒跳变。
+- **滚动**：卡片带缓慢流动的光泽；拉到顶/底有柔和回弹。
+- **无障碍**：跟随系统「关闭动画」（Reduce Motion）自动直切。
+
+### 提权（可选，纯读取）
+
+原则是「**能读多少读多少，永远不写**」，优先级 **Root > Shizuku > 免提权**：
+
+| 档位 | 额外可读 |
+|---|---|
+| 免提权 | 电量 / 电池温度 / 电压、内存、传感器、部分 GPU 占用、多数机型 CPU 频率 |
+| **Shizuku**（推荐） | 热区温度、cooling、CPU 占用、充电器输入侧 V/I、更多 sysfs 节点 |
+| Root | 再解锁部分被 SELinux 拒绝的节点（如某些机型的 Adreno GPU 频率） |
+
+未授权时相关卡片显示空态并给出「去授权」入口，**不会整页空白**。
 
 ### 数据导出
-- 一键导出 **三区 CSV**：`META`（设备与口径）/ `RAW`（原始读数）/ `RENDERED`（屏幕实际显示值），便于核对
-- 保存至下载目录，保留最近若干份
+
+CSV 三段式：**META**（时刻 / 机型 / 版本）、**RAW**（内核原始单位、零换算、含来源路径）、**RENDERED**（同 UI 换算、含页面归属）。UTF-8 BOM + 全字段引号转义，写入「下载/Mio」，只保留最近 5 个。
 
 ---
 
-## 三档权限：免提权也能用
+## 安装
 
-不授权不会整块空白；授权越深，可读参数越多。应用按实际通道自动选择，失权自动回退。
+1. 到 [Releases](../../releases) 下载最新 `.apk`；
+2. 允许「安装未知来源应用」后直接安装（**Android 8.0 及以上**）；
+3. 想拿到更完整的数据（热区 / CPU 占用 / 充电器输入侧），再装 [Shizuku](https://shizuku.rikka.app/) 并在 App 内一键授权 —— **不装也能用**。
 
-| 能力 | 免提权 | Shizuku | Root |
-|---|:---:|:---:|:---:|
-| 电池基础（电量 / 电压 / 电流 / 温度 / 健康 / 循环） | ✅ | ✅ | ✅ |
-| CPU 当前频率 / governor / 档位驻留 | ✅ | ✅ | ✅ |
-| 内存、传感器、设备基础信息 | ✅ | ✅ | ✅ |
-| GPU 使用率（部分机型） | ✅ | ✅ | ✅ |
-| 全量热区、精确 CPU 占用、负载 | – | ✅ | ✅ |
-| CPU 深层 / 受限频率节点 | – | ✅ | ✅ |
-| Mali / MTK GPU 频率与占用 | – | ✅ | ✅ |
-| 超大核（如 X2）频率上限 | – | – | ✅ |
-| 高通 kgsl GPU 频率 | – | – | ✅ |
-| 充电器输入侧协商电压 / 电流 | – | 视机型 | ✅ |
-
-> Shizuku 通过 ADB 无线调试激活，无需 Root；Root 设备优先使用 `su` 通道。
+> 首次启动有 10 页引导，说明三档权限与每个页面能看什么。
 
 ---
 
-## 局域网双模式
+## 技术栈
 
-同一个 App 内置两种角色，两部（或多部）手机装入后即可使用。
+| 项 | 值 |
+|---|---|
+| 语言 / UI | Kotlin 2.0.21 · Jetpack Compose（Material 3 · BOM 2024.09.03） |
+| 构建 | AGP 8.7.3 · Gradle 8.10.2 · JDK 17 |
+| 最低 / 目标 | minSdk 26（Android 8.0）· targetSdk 34 |
+| 架构 | 单 Activity + Compose · ViewModel + 细粒度 StateFlow · 分层回退的硬件 Reader |
+| 权限 | 可选 Shizuku（`moe.shizuku.manager.permission.API_V23`）· 可选 Root(`su`) |
+| 网络 | 仅局域网：mDNS(NSD) 发现 + TCP 长连接 |
 
-- **被监控端（Agent）**
-  - 前台服务 + 后台持续采集，支持免提权 / Shizuku / Root
-  - 完善防杀保活：前台常驻通知、电池优化白名单、划任务后自动重拉 + 闹钟兜底
-  - 内置「厂商后台保活」引导（自启动、应用速冻、多任务加锁），覆盖 OPPO / vivo / 小米 / 华为 / 三星
-  - 可随时一键终止
-- **监控端（Monitor）**
-  - mDNS 在局域网内**自动发现**设备并全自动连接，无需手动输 IP（也支持手动添加）
-  - 仪表盘式多设备卡片：型号、SoC、延迟、核心拓扑、温度、占用等一览
-  - 点入查看任一设备的完整远程详情
-  - 离线自动重连、重新发现自愈
-- **协议**：mDNS 服务类型 `_a41probe._tcp`；TCP 长度前缀 JSON 帧；**仅局域网直连，不经过云端**
+**工程亮点**
 
----
-
-## 适配机型
-
-- **深度适配**：中兴天机 A41 Ultra（ZTE A2023H，骁龙 8 Gen 1 / SM8450，1×X2 + 3×A710 + 4×A510，Adreno 730）
-- **已真机验证**：OPPO PJB110（天玑 700 / MT6833，6×A55 + 2×A76，Mali-G52）
-- **多机型自适应策略**（不依赖机型枚举）：
-  1. **分层回退**：标准系统 API → sysfs / proc 节点 → Shizuku / Root
-  2. **识别硬件而非机型**：按 Linux cpufreq policy 动态分簇，解析 MIDR 识别 CPU 微架构
-  3. **GPU 多平台探测**：Adreno（kgsl）/ Mali / PowerVR / 通用 devfreq
-  4. **单位阈值归一化**：自动识别 kHz / MHz、µV / V 等单位并归一
-- 仓库附 [`docs/supported_devices.csv`](docs/supported_devices.csv)：172 款常见机型画像与适配分级（S / A / B / C / D），作为参考与社区反馈库
-- 系统要求：minSdk 26（Android 8.0），targetSdk 34（Android 14）
+- **统一采集口径**：本机 UI 与被监控端调用同一个 `SnapshotCollector`，「本机看到的」与「推给别的手机的」是同一套数据与换算。
+- **提权批量读取**：一条 shell 命令取回热区 / 频率 / loadavg / cooling 等，每帧跨进程往返从 11+ 次降到 1 次。
+- **分层回退识别硬件**：SoC / GPU / 热区 / 电源节点按平台探测并回退，不为每台机器写死代码。
+- **细粒度订阅**：卡片各自订阅所需 Flow，未变不重组；滚动上下文用动态 `compositionLocal`，避免滚动时整页重组。
+- **冷启动 / 回前台 <1s**：先出轻快照（电量 / 内存）再补提权富数据，回前台只合并不倒退。
 
 ---
 
-## 使用须知（重要口径）
+## 已知限制（诚实说明）
 
-- **功率怎么算**：界面功率 = 电池电压 × 电流（`V×I`），充电为正、放电为负。充电器标称值（如 66W）是**额定峰值**，实时功率随电量、温度、协商协议浮动，二者不矛盾。内核 `power_now` 节点在部分机型为坏值，本应用不采用。
-- **结温 vs 手感温度**：结温是芯片内部温度（cpuss / gpuss），通常比外壳 / 手感高 15~25°C；手感请看「外壳侧（skin）」。标注为「Cached / 历史峰值」的数值不是当前温度。
-- **快充判定**：电流 ≥ 2A 或输入电压 ≥ 9V 判为快充；≥ 0.5A 为普通充电；以下为涓流。
-- **同簇同频正常**：同一簇的多个核心共享 DVFS 频率域，频率始终一致属正常现象。
-- **缺失不伪造**：读不到的参数一律显示「–」或灰格，不以 0 顶替、不臆造数值。
-- **网络范围**：本机监控完全不联网；双模式仅在同一局域网内直连。
-
----
-
-## 下载与安装
-
-1. 前往 [**Releases**](../../releases) 下载最新 `A41Probe-vX.X.X.apk`
-2. 在手机上打开 APK，按提示允许「安装未知来源应用」
-3. 安装后直接打开即可；如需更深参数，在「设置」页按引导授权 Shizuku 或 Root
-4. 多设备监控：在被监控手机进入「被监控端」启动服务，监控手机进入「监控端」自动发现
-
-> 当前为 debug 签名的社区版本，安装时系统可能提示「未校验 / 风险」，属正常现象。
+- **仅只读**：不修改任何系统设置与节点，因此读不到需要写权限的数据；
+- **GPU 频率**：部分机型（如中兴 A41 Ultra）对 App 与 shell 都拒绝该节点，需要 Root；
+- **触感强度**：少数机型的厂商 HAL 不暴露振幅接口，此时「轻 / 中 / 重」只能靠时长与波形表达；
+- **后台保活**：国产 ROM 杀后台较激进，被监控端已内置多重保活与厂商设置引导，仍需系统层面放行；
+- **语言**：目前为简体中文（文案内嵌，尚未抽出字符串资源）。
 
 ---
 
-## 技术栈与架构
+## 隐私
 
-- **Kotlin** + **Jetpack Compose** + Material 3，单 Activity、MVVM、StateFlow
-- 三权桥接：App 域 / Shizuku API（rikka 12.2）/ Root `su`
-- 局域网：NSD（mDNS）服务发现 + 原生 TCP Socket，长度前缀 JSON 帧
-- 自研轻量图表：面积曲线、迷你趋势线、仪表环、归一化柱状图
-- minSdk 26 / targetSdk 34
+- 本机监控**不联网**；
+- 双模式**仅在局域网内**向用户自己的设备推送数据，不经过任何外部服务器；
+- 不采集、不上传任何个人信息；CSV 只写到本机「下载」目录。
 
-## 隐私与安全
+---
 
-- **纯只读**：只读取系统公开接口与节点，不写系统、不改任何设置
-- 不采集个人数据、无联网上报、无第三方统计 SDK
-- 双模式数据仅在局域网内直连传输，不经过任何服务器
-- CSV 导出仅保存在本机下载目录
+## 构建
 
-## 免责声明
+```bash
+# JDK 17 + Android SDK 34
+./gradlew assembleDebug
+# 产物：app/build/outputs/apk/debug/app-debug.apk
+```
 
-本软件提供的参数来源于系统公开接口与文件节点，受厂商、固件、驱动影响，个别参数可能缺失或存在偏差，**仅供学习与参考**，不构成任何专业检测或诊断结论。作者不对因使用或无法使用本软件造成的任何后果承担责任。
+---
 
-## 相关文档
+## 许可
 
-- [开发文档](docs/开发文档.md)：架构、采集层、口径、算法、双模式协议、多机型自适应的完整说明
-- [机型适配库](docs/supported_devices.csv)：172 款机型画像与适配分级
+[MIT](LICENSE)
 
-## 许可证
-
-[MIT License](LICENSE)
+<div align="center"><sub>Mio 澪 · 纯只读硬件监控 · 用数据说话</sub></div>

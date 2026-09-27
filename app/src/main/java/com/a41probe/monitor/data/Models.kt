@@ -82,8 +82,15 @@ data class BatteryData(
 ) {
     val healthPercent: Double?
         get() = if (chargeFull != null && chargeDesign != null && chargeDesign > 0)
-            chargeFull * 100.0 / chargeDesign else null
+            // v0.28.2: 健康度物理钳制 0..120%——>120% 视为脏数据（设计容量即上限），返回 null
+            (chargeFull * 100.0 / chargeDesign).takeIf { it in 0.0..120.0 } else null
     val isCharging: Boolean get() = status?.equals("Charging", true) == true
+    /** 已充满（BatteryManager FULL / sysfs "Full"）：仍插着线但已停充，不能判为放电 */
+    val isFull: Boolean get() = status?.equals("Full", true) == true
+    /** 接电但未在充电（NOT_CHARGING，少见过渡态） */
+    val isNotCharging: Boolean get() = status?.equals("Not charging", true) == true
+    /** 是否处于接电状态（充电中 / 已充满 / 接电未充）——符号与副文案统一口径 */
+    val isPlugged: Boolean get() = isCharging || isFull || isNotCharging
     /** 电流展示值：原始符号随机型/电芯不统一，统一取绝对值，正负由 UI 按充电态标注 */
     val currentDisplay: Double? get() = currentA?.let { kotlin.math.abs(it) }
     /** 充电输入功率展示值（power_now，充电头端口径）：仅 CSV 参考列使用 */
@@ -97,6 +104,17 @@ data class BatteryData(
     /** 适配器输入侧功率 W（充电器实际输出，双口径真相）：input V×I，缺任一返回 null */
     val inputPowerW: Double?
         get() = inputVoltV?.let { v -> inputCurA?.let { c -> v * c } }
+    /** UI 实际采用的输入侧功率：物理范围 0..150W 且电池确实在进电（电流≥0.1A）。
+     *  满电/停充后输入侧节点可能残留最后协商 V/I（如 9V·1.8A），不屏蔽会显示假充电功率 */
+    val effectiveInputPowerW: Double?
+        get() = inputPowerW?.takeIf { it in 0.0..150.0 && (currentDisplay ?: 0.0) >= 0.1 }
+    /** UI 统一展示功率（hero / 曲线 / 副文案 / CSV 一处定义三处复用）：满电显 0；
+     *  否则输入侧优先、回退电池侧 V×I，统一钳 0..150W（P1-UI-2/3） */
+    val uiPowerW: Double?
+        get() = when {
+            isFull -> 0.0
+            else -> (effectiveInputPowerW ?: powerShown)?.coerceIn(0.0, 150.0)
+        }
     /**
      * 充电档位人话（v20.3 重构）：charge_type 是 PMIC 协商档，恒为 Fast，不反映实时功率，
      * 不再参与判定（真机实测 5V/0.5A 也读 Fast）。改以实时物理量判定：
@@ -105,7 +123,12 @@ data class BatteryData(
      */
     val chargeMode: String
         get() = when {
+            isFull -> "已充满"
+            isNotCharging -> "未充电"
             !isCharging -> "放电"
+            // v0.26.8: 固件常提前把 capacity 标到 100，CV 末段仍在进电（实测 100% 时还有 19.6W）
+            capacity != null && capacity >= 100 ->
+                if ((currentDisplay ?: 0.0) >= 0.5) "满电收尾" else "涓流补电"
             (currentDisplay ?: 0.0) >= 2.0 -> "快充"
             (inputVoltV ?: 0.0) >= 9.0 -> "快充"
             (currentDisplay ?: 0.0) >= 0.5 -> "普通充电"
@@ -155,7 +178,10 @@ data class ThermalZone(
     val priv: Priv = Priv.SHIZUKU,
     /** RAW：temp 原始 m°C（未÷1000），CSV RAW 区留证 */
     val tempMC: Int? = null,
-)
+) {
+    /** v0.28.2: 物理范围安全温度（-40..150°C），超界返回 null——消费方优先用此口径 */
+    val tempSafe: Double? get() = tempC?.takeIf { it in -40.0..150.0 }
+}
 
 /** 热缓解设备（cooling_device）：cur/max 等级，cur>0 = 系统正在限制该部件 */
 data class CoolingDev(
@@ -165,7 +191,8 @@ data class CoolingDev(
     val max: Int? = null,
 ) {
     val active: Boolean get() = (cur ?: 0) > 0
-    val ratio: Float get() = if (max != null && max > 0 && cur != null)
+    // v0.28.2: cur 为负（异常/未使能占位）判 0，不计算负占比
+    val ratio: Float get() = if (max != null && max > 0 && cur != null && cur >= 0)
         cur.toFloat() / max.toFloat() else 0f
 }
 

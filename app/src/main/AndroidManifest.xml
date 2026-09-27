@@ -17,6 +17,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- v0.28.8: 轻触感反馈（Tab 切换 / 卡片按下）——普通权限，无运行时弹窗 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <!-- v20.9: Android 11+ 包可见性——声明可见 Shizuku 包，getLaunchIntentForPackage 才不返回 null -->
     <queries>
@@ -25,10 +29,10 @@
     </queries>
 
     <application
-        android:label="A41 Probe"
+        android:label="Mio 澪"
         android:icon="@mipmap/ic_launcher"
-        android:theme="@android:style/Theme.Material.NoActionBar"
-        android:allowBackup="false">
+        android:theme="@style/Theme.Mio"
+        android:name=".MioApp" android:allowBackup="false">
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"
@@ -55,5 +59,19 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="局域网性能监控：用户主动开启后，在本地网络向其自有设备推送本机性能参数快照" />
         </service>
+
+        <!-- v0.27.2: 开机自启（仅用户开启过被监控模式时） -->
+        <receiver
+            android:name=".data.agent.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        <!-- v0.27.2: JobScheduler 周期兜底保活 -->
+        <service
+            android:name=".data.agent.KeepAliveJobService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false" />
     </application>
 </manifest>

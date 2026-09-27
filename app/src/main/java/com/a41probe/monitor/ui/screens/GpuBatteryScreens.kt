@@ -1,5 +1,6 @@
 package com.a41probe.monitor.ui.screens
 
+import com.a41probe.monitor.ui.components.MioPageTitle
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -30,7 +32,8 @@ import com.a41probe.monitor.ui.components.AnimatedNum
 import com.a41probe.monitor.ui.components.AreaLine
 import com.a41probe.monitor.ui.components.CardTitle
 import com.a41probe.monitor.ui.components.GaugeRing
-import com.a41probe.monitor.ui.components.ProbeCard
+import com.a41probe.monitor.ui.components.NestedTile
+import com.a41probe.monitor.ui.components.SafeCard
 import com.a41probe.monitor.ui.components.Sparkline
 import com.a41probe.monitor.ui.components.StatRow
 import com.a41probe.monitor.ui.components.tempColor
@@ -40,6 +43,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
+import com.a41probe.monitor.ui.components.ScrollAware
 
 private fun f1(v: Double?): String = if (v == null) "–" else ((v * 10).roundToInt() / 10.0).toString()
 
@@ -52,41 +56,51 @@ private fun estH(hours: Double): String {
 /** GPU：占用曲线（单指标面积线）、频率（R）、gpuss 温度（S）、温度曲线 */
 @Composable
 fun GpuScreen(vm: MonitorViewModel) {
-    val snap by vm.snapshot.collectAsState()
+    // v0.28.0: 细粒度订阅——GPU 数据/权限独立流
+    val g by vm.gpuFlow.collectAsState()
+    val priv by vm.privFlow.collectAsState()
     val busyHist by vm.busyHist.collectAsState()
     val tempH by vm.gpuTempHist.collectAsState()
 
+        val listState = rememberLazyListState()
+    ScrollAware(listState) {
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxWidth(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            ProbeCard {
+            MioPageTitle("GPU", "占用 · 频率 · 核心温度")
+        }
+        item {
+            SafeCard(fallbackTitle = "GPU 占用") {
                 CardTitle("占用", Priv.FREE, right = {
                     // UX(M10): 人话副标题
                     Text("使用率 · 内核上报", color = Ink.off, fontSize = 10.5.sp)
                 })
                 Spacer(Modifier.height(6.dp))
-                Text("${snap.gpu.busyPercent ?: "–"}%", color = Ink.accent, fontSize = 26.sp,
+                Text("${g.busyPercent ?: "–"}%", color = Ink.accent, fontSize = 26.sp,
                     fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(10.dp))
                 // GPU 占用有绝对 0..100 语义：固定量程，3% 显示在 3% 位置（真实比例，不放大）
                 // S3: y 轴刻度 0/50/100%，曲线不再只有形状没有量级
-                AreaLine(busyHist, color = Ink.accent, height = 96.dp, fixedRange = 100f,
-                    axisLabels = listOf("100%", "50%", "0%"),
-                    latestLabel = { f -> "${f.roundToInt()}%" })
+                NestedTile {
+                    AreaLine(busyHist, color = Ink.accent, height = 96.dp, fixedRange = 100f,
+                        axisLabels = listOf("100%", "50%", "0%"),
+                        latestLabel = { f -> "${f.roundToInt()}%" })
+                }
             }
         }
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "GPU 频率") {
                 // v20.12(S1-7): 频率档位随真实状态——未提权标 R，已提权无节点标"不可用"
-                CardTitle("频率", when (snap.gpu.freqState) {
+                CardTitle("频率", when (g.freqState) {
                     com.a41probe.monitor.ui.theme.DataState.NEED_PRIV -> Priv.ROOT
                     else -> null
                 })
                 Spacer(Modifier.height(8.dp))
-                val f = snap.gpu.freqMHz
+                val f = g.freqMHz
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(if (f != null) "$f MHz" else "–",
                         color = if (f != null) Ink.tx else Ink.off,
@@ -95,8 +109,8 @@ fun GpuScreen(vm: MonitorViewModel) {
                     Spacer(Modifier.width(10.dp))
                     Text(
                         when {
-                            f != null -> "kgsl gpuclk · ${if (snap.rootAvailable) "Root 通道" else "App 域直读"}"
-                            snap.gpu.freqState == com.a41probe.monitor.ui.theme.DataState.NEED_PRIV ->
+                            f != null -> "kgsl gpuclk · ${if (priv.rootAvailable) "Root 通道" else "App 域直读"}"
+                            g.freqState == com.a41probe.monitor.ui.theme.DataState.NEED_PRIV ->
                                 "需 Root · 授权后读取"
                             else -> "未找到频率节点 · 已试 kgsl/devfreq"
                         },
@@ -106,33 +120,33 @@ fun GpuScreen(vm: MonitorViewModel) {
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                ProbeCard(Modifier.weight(1f)) {
+                SafeCard(Modifier.weight(1f), fallbackTitle = "GPU 核心 0") {
                     // S5: 用户可见标题汉化，sysfs 代号保留为副标题（工具感）
-                    CardTitle("GPU 核心 0", Priv.SHIZUKU, rootActive = snap.rootAvailable)
+                    CardTitle("GPU 核心 0", Priv.SHIZUKU, rootActive = priv.rootAvailable)
                     Spacer(Modifier.height(6.dp))
-                    val t = snap.gpu.temp0C
+                    val t = g.temp0C
                     Text("${f1(t)}°C", color = if (t != null) tempColor(t) else Ink.off,
                         fontSize = 20.sp, fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.SemiBold)
-                    Text(if (t != null) "温区 gpuss-0" else
-                        if (snap.rootAvailable) "Root 读取中…" else "需 Shizuku · 授权后读取",
+                    Text(if (t != null) "GPU 温区 · 核心" else
+                        if (priv.rootAvailable) "Root 读取中…" else "需 Shizuku · 授权后读取",
                         color = Ink.off, fontSize = 10.sp)
                 }
-                ProbeCard(Modifier.weight(1f)) {
-                    CardTitle("GPU 核心 1", Priv.SHIZUKU, rootActive = snap.rootAvailable)
+                SafeCard(Modifier.weight(1f), fallbackTitle = "GPU 核心 1") {
+                    CardTitle("GPU 核心 1", Priv.SHIZUKU, rootActive = priv.rootAvailable)
                     Spacer(Modifier.height(6.dp))
-                    val t = snap.gpu.temp1C
+                    val t = g.temp1C
                     Text("${f1(t)}°C", color = if (t != null) tempColor(t) else Ink.off,
                         fontSize = 20.sp, fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.SemiBold)
-                    Text(if (t != null) "温区 gpuss-1" else
-                        if (snap.rootAvailable) "Root 读取中…" else "需 Shizuku · 授权后读取",
+                    Text(if (t != null) "GPU 温区 · 核心" else
+                        if (priv.rootAvailable) "Root 读取中…" else "需 Shizuku · 授权后读取",
                         color = Ink.off, fontSize = 10.sp)
                 }
             }
         }
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "GPU 温度曲线") {
                 CardTitle("温度曲线", right = {
                     // UX(M4): 时间窗 + 数据源，同屏可读
                     Text("GPU 核心 0 · 近 60s", color = Ink.off, fontSize = 10.5.sp)
@@ -140,19 +154,21 @@ fun GpuScreen(vm: MonitorViewModel) {
                 Spacer(Modifier.height(10.dp))
                 AreaLine(tempH, color = Ink.warn, height = 96.dp)
                 Spacer(Modifier.height(6.dp))
-                Text("当前 ${f1(snap.gpu.temp0C)} °C", color = Ink.tx2, fontSize = 11.sp)
+                Text("当前 ${f1(g.temp0C)} °C", color = Ink.tx2, fontSize = 11.sp)
             }
         }
         item { Spacer(Modifier.height(4.dp)) }
-    }
+    
+    }}
 }
 
 /** 电池：状态卡 + 功率/温度曲线 + iOS 详情列表 + 双口径温度 */
 @Composable
 fun BatteryScreen(vm: MonitorViewModel) {
-    val snap by vm.snapshot.collectAsState()
-    val b = snap.battery
-    val health = b.healthPercent
+    // v0.28.0: 细粒度订阅——电池数据/权限独立流
+    val b by vm.batteryFlow.collectAsState()
+    val priv by vm.privFlow.collectAsState()
+    val health = b?.healthPercent
     val powerHist by vm.powerHist.collectAsState()
     val voltHist by vm.voltHist.collectAsState()
     val curHist by vm.curHist.collectAsState()
@@ -167,19 +183,36 @@ fun BatteryScreen(vm: MonitorViewModel) {
     }
 
     // v19 双口径：大字优先适配器输入侧功率（充电器实际输出，需提权）；读不到回退电池侧 V×I
-    val inputW = b.inputPowerW
-    val showW = inputW ?: b.powerShown
+    // v0.26.4: 输入侧功率物理范围双保险（>150W 视为脏值，回退电池侧 V×I）
+    // v0.26.7: 输入侧功率仅在电池确实进电时采用（满电停充后节点残留会形成假功率）
+    val inputW = b.effectiveInputPowerW
+    val showW = b.uiPowerW
     val mode = b.chargeMode
-    val stateText = if (b.isCharging) (if (mode == "快充") "快充中" else "充电中") else "放电中"
+    val cap0 = b.capacity
+    val cur0 = b.currentDisplay
+    val stateText = when {
+        b.isFull -> "已充满"
+        b.isNotCharging -> "未充电"
+        cap0 != null && cap0 >= 100 && b.isCharging ->
+            if ((cur0 ?: 0.0) >= 0.5) "满电收尾中" else "涓流补电中"
+        b.isCharging -> if (mode == "快充") "快充中" else "充电中"
+        else -> "放电中"
+    }
     val fast = b.isCharging && (mode == "快充" || (inputW ?: 0.0) >= 15.0)
 
+        val listState = rememberLazyListState()
+    ScrollAware(listState) {
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxWidth(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            ProbeCard {
+            MioPageTitle("电池", "容量 · 电压电流 · 健康与循环")
+        }
+        item {
+            SafeCard(fallbackTitle = "电池概览") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // UX(M7): 读不到电量时画空环 + "–"，不把"未知"伪装成 0%
                     GaugeRing(
@@ -196,7 +229,7 @@ fun BatteryScreen(vm: MonitorViewModel) {
                             fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.height(6.dp))
                         Row(verticalAlignment = Alignment.Bottom) {
-                            Text(if (b.isCharging) "+" else "−", color = Ink.accent, fontSize = 26.sp,
+                            Text(if (b.isPlugged) "+" else "−", color = Ink.accent, fontSize = 26.sp,
                                 fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
                             AnimatedNum(showW?.toFloat(), { f -> "%.1f".format(f) },
                                 color = Ink.accent, sizeSp = 26, weight = FontWeight.SemiBold)
@@ -208,25 +241,30 @@ fun BatteryScreen(vm: MonitorViewModel) {
                         Text(
                             if (inputW != null)
                                 "充电器 ${f1(b.inputVoltV)}V · ${f1(b.inputCurA)}A · ~${f1(inputW)}W"
-                            else if (snap.rootAvailable) "电池侧 V×I · 输入侧节点不可用"
+                            else if (priv.rootAvailable) "电池侧 V×I · 输入侧节点不可用"
                             else "电池侧 V×I · 充电器输入需提权",
                             color = if (inputW != null) Ink.accent else Ink.tx2,
                             fontSize = 11.5.sp, fontFamily = FontFamily.Monospace)
-                        Text("电池 ${f1(b.voltage)} V · ${if (b.isCharging) "+" else "−"}${f1(b.currentDisplay)} A · $mode · ${b.tech ?: "–"}",
+                        Text("电池 ${f1(b.voltage)} V · ${if (b.isPlugged) "+" else "−"}${f1(b.currentDisplay)} A · $mode · ${b.tech ?: "–"}",
                             color = Ink.tx2, fontSize = 11.5.sp, fontFamily = FontFamily.Monospace)
                         Spacer(Modifier.height(6.dp))
                         Text("66W 为适配器额定峰值 · 实时功率随电量/温度/协议浮动",
                             color = Ink.off, fontSize = 10.sp)
                         // v20.21: 充满 / 续航估算——按当前功率与学习容量推算，标注口径不冒充实测
+                        // v0.28.0: b 为委托属性无法 smart cast，先解引用局部变量
+                        val cap = b.capacity
+                        val full = b.chargeFull
+                        val volt = b.voltage
+                        val curD = b.currentDisplay
                         val est = when {
-                            b.isCharging && b.capacity != null && b.chargeFull != null &&
-                                    b.voltage != null && (inputW ?: 0.0) > 0.5 ->
+                            b.isCharging && cap != null && cap < 100 && full != null &&
+                                    volt != null && (inputW ?: 0.0) > 0.5 ->
                                 // v20.24(P0-1): chargeFull=mAh → Ah（÷1000）再乘电压除功率得小时；
                                 // 原公式 mWh/W=毫小时，放大 1000 倍（50%·25W 显示 380 小时）
-                                "预计充满 " + estH(((100 - b.capacity) / 100.0) * b.chargeFull / 1000.0 * b.voltage / (inputW ?: 0.0))
-                            !b.isCharging && b.capacity != null && b.chargeFull != null &&
-                                    (b.currentDisplay ?: 0.0) > 0.02 ->
-                                "预计续航 " + estH(b.capacity / 100.0 * b.chargeFull / (b.currentDisplay!! * 1000))
+                                "预计充满 " + estH(((100 - cap) / 100.0) * full / 1000.0 * volt / (inputW ?: 0.0))
+                            !b.isCharging && cap != null && full != null &&
+                                    (curD ?: 0.0) > 0.02 ->
+                                "预计续航 " + estH(cap / 100.0 * full / (curD!! * 1000))
                             else -> null
                         }
                         if (est != null) {
@@ -241,7 +279,7 @@ fun BatteryScreen(vm: MonitorViewModel) {
             val negV = b.maxChargingVoltageUv
             val negA = b.maxChargingCurrentUa
             if (b.isCharging && (negV != null || negA != null)) {
-                ProbeCard {
+                SafeCard(fallbackTitle = "充电器协商") {
                     CardTitle("充电器协商", Priv.FREE,
                         right = { Text("系统上报 · 免提权", color = Ink.off, fontSize = 10.5.sp) })
                     Spacer(Modifier.height(8.dp))
@@ -263,7 +301,7 @@ fun BatteryScreen(vm: MonitorViewModel) {
             }
         }
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "电池功率曲线") {
                 CardTitle("功率曲线", right = {
                     // UX(M4): 明示时间窗，用户知道窗口宽度与方向
                     Text("近 60s · V×I 实时", color = Ink.off, fontSize = 10.5.sp)
@@ -273,34 +311,50 @@ fun BatteryScreen(vm: MonitorViewModel) {
                 val avgW = remember(powerHist) {
                     if (powerHist.isEmpty()) null else powerHist.average().toFloat()
                 }
-                AreaLine(powerHist, color = Ink.accent, height = 110.dp,
-                    avgValue = avgW, fixedRange = 30f,
-                    axisLabels = listOf("30W", "15W", "0W"),
-                    latestLabel = { f -> "%.1fW".format(f) })
+                // v0.26.6(P0-2): 功率量程动态化——固定 30W 会把快充输入侧 60W+ 削顶、
+                // 涓流 20W 压底，与 hero 大数字同源后更明显；按历史最大绝对值自适应
+                val pwMaxAbs = powerHist.maxOfOrNull { kotlin.math.abs(it) } ?: 0f
+                val pwRange = (pwMaxAbs * 1.3f).coerceAtLeast(5f)   // v0.27.0: 30→5，放电小功率不贴底
+                NestedTile {
+                    AreaLine(powerHist, color = Ink.accent, height = 110.dp,
+                        avgValue = avgW, fixedRange = pwRange,
+                        axisLabels = listOf("${f1(pwRange.toDouble())}W", "${f1((pwRange / 2f).toDouble())}W", "0W"),
+                        latestLabel = { f -> "%.1fW".format(f) })
+                }
                 Spacer(Modifier.height(6.dp))
-                Text("当前 ${f1(b.powerShown)} W${if (avgW != null) " · 均值 ${f1(avgW.toDouble())} W" else ""}",
+                // v0.26.6: 与 hero 大数字同源（输入侧优先，回退电池侧）——不再出现"曲线 2.9W / 上面 21.8W"
+                val showWv = b.uiPowerW
+                Text("当前 ${f1(showWv)} W${if (avgW != null) " · 均值 ${f1(avgW.toDouble())} W" else ""}",
                     color = Ink.tx2, fontSize = 11.sp)
             }
         }
         // v20: 电压 / 电流实时曲线（探针数据一直有，补齐可视化）
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "电压电流曲线") {
                 CardTitle("电压 / 电流", Priv.FREE,
                     right = { Text("近 60s · 同源实时", color = Ink.off, fontSize = 10.5.sp) })
                 Spacer(Modifier.height(10.dp))
                 // S1#3: 电压固定量程 3.3-4.5V（电池实际工作区间），动态归一化会把 ±0.05V 放大成心跳
-                AreaLine(voltHist, color = Ink.accent, height = 78.dp,
-                    fixedRange = 1.2f, fixedCenter = 3.9f,
-                    axisLabels = listOf("4.5V", "3.9V", "3.3V"),
-                    latestLabel = { f -> "%.2fV".format(f) })
+                NestedTile {
+                    AreaLine(voltHist, color = Ink.accent, height = 78.dp,
+                        fixedRange = 1.2f, fixedCenter = 3.9f,
+                        axisLabels = listOf("4.5V", "3.9V", "3.3V"),
+                        latestLabel = { f -> "%.2fV".format(f) })
+                }
                 Spacer(Modifier.height(4.dp))
                 Text("电压", color = Ink.off, fontSize = 10.sp)
                 Spacer(Modifier.height(10.dp))
-                // S1#4: 电流 0-6A（快充峰值不截顶，日常 0-2A 放电仍有可见变化）
-                // v20.16(P0-5): A710 蓝→A510 青绿——电压蓝/电流蓝两根线几乎同色，用户分不清
-                AreaLine(curHist, color = Ink.clusterEff, height = 78.dp,
-                    fixedRange = 6f, axisLabels = listOf("6A", "3A", "0A"),
-                    latestLabel = { f -> "%.1fA".format(f) })
+                // S1#4 / v0.26.6: 电流量程动态化——涓流 0.7A 在 0-6A 固定量程贴底不可见
+                //（用户反馈"曲线比上面数字低一大截"）；按历史最大绝对值自适应扩量程，
+                // 快充不截顶、涓流有可见起伏
+                val curMaxAbs = curHist.maxOfOrNull { kotlin.math.abs(it) } ?: 0f
+                val curRange = (curMaxAbs * 1.3f).coerceAtLeast(1f)   // v0.27.0: 2→1，小电流不贴底
+                NestedTile {
+                    AreaLine(curHist, color = Ink.clusterEff, height = 78.dp,
+                        fixedRange = curRange,
+                        axisLabels = listOf("${f1(curRange.toDouble())}A", "${f1((curRange / 2f).toDouble())}A", "0A"),
+                        latestLabel = { f -> "%.1fA".format(f) })
+                }
                 Spacer(Modifier.height(4.dp))
                 Text("电流（取绝对值）", color = Ink.off, fontSize = 10.sp)
                 Spacer(Modifier.height(6.dp))
@@ -309,12 +363,14 @@ fun BatteryScreen(vm: MonitorViewModel) {
             }
         }
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "电池温度曲线") {
                 CardTitle("温度曲线", right = {
                     Text("内核上报", color = Ink.off, fontSize = 10.5.sp)
                 })
                 Spacer(Modifier.height(10.dp))
-                AreaLine(tempHist, color = Ink.warn, height = 96.dp)
+                NestedTile {
+                    AreaLine(tempHist, color = Ink.warn, height = 96.dp)
+                }
                 Spacer(Modifier.height(6.dp))
                 Text("当前 ${f1(b.tempC)} °C · 广播 ${f1(b.tempBmC)} °C",
                     color = Ink.tx2, fontSize = 11.sp)
@@ -329,7 +385,7 @@ fun BatteryScreen(vm: MonitorViewModel) {
             }
         }
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "电池详情") {
                 CardTitle("电池详情", Priv.FREE)
                 Spacer(Modifier.height(6.dp))
                 val wear = if (health != null) (100 - health.roundToInt()) else null
@@ -373,19 +429,19 @@ fun BatteryScreen(vm: MonitorViewModel) {
                         }
                     }, mono = true)
                 Spacer(Modifier.height(4.dp))
-                Text("容量口径：高通燃料计学习值（MASTERSLAVE 双电芯平均）",
+                Text("容量口径：燃料计学习容量（单位 mAh，随机型电芯结构而异）",
                     color = Ink.off, fontSize = 10.sp)
             }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                ProbeCard(Modifier.weight(1f)) {
+                SafeCard(Modifier.weight(1f), fallbackTitle = "电池温度·内核") {
                     CardTitle("温度 · 内核", Priv.FREE)
                     Spacer(Modifier.height(8.dp))
                     Text("${f1(b.tempC)}°C", color = Ink.tx, fontSize = 20.sp,
                         fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
                 }
-                ProbeCard(Modifier.weight(1f)) {
+                SafeCard(Modifier.weight(1f), fallbackTitle = "电池温度·广播") {
                     CardTitle("温度 · 系统广播")
                     Spacer(Modifier.height(8.dp))
                     Text("${f1(b.tempBmC)}°C", color = Ink.tx, fontSize = 20.sp,
@@ -398,7 +454,7 @@ fun BatteryScreen(vm: MonitorViewModel) {
         }
         // v20: 24h 容量趋势落地（本地记录，非占位）
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "容量趋势") {
                 CardTitle("容量趋势 · 24h",
                     right = { Text("本地记录 · 60s 粒度", color = Ink.off, fontSize = 10.5.sp) })
                 Spacer(Modifier.height(10.dp))
@@ -417,5 +473,6 @@ fun BatteryScreen(vm: MonitorViewModel) {
             }
         }
         item { Spacer(Modifier.height(4.dp)) }
-    }
+    
+    }}
 }

@@ -72,7 +72,8 @@ object CpuTopologyDetector {
         val groups = runCatching { detectClusters(cores) }.getOrDefault(listOf(cores))
         val archByCore = runCatching { parseCpuinfo() }.getOrDefault(emptyMap())
 
-        val clusters = groups.map { idxs ->
+        // v0.26.3(CRASH): 空簇兜底——detectClusters 极端返回空列表时 first() 会崩，跳过空簇
+        val clusters = groups.filter { it.isNotEmpty() }.map { idxs ->
             val first = idxs.first()
             CoreCluster(
                 label = archByCore[first] ?: "",
@@ -136,7 +137,8 @@ object CpuTopologyDetector {
             v = RootBridge.exec("cat $base/cpuinfo_max_freq 2>/dev/null || cat $base/scaling_max_freq 2>/dev/null")
                 ?.trim()?.toIntOrNull()
         }
-        return v?.div(1000)
+        // v0.26.1: 与 CpuReader 同链的单位阈值归一化（>100_000 视为 kHz÷1000，否则已 MHz）
+        return Units.cpuFreqMHz(v)
     }
 
     /** 解析 /proc/cpuinfo：processor:N 分块，取 CPU implementer + CPU part → 核短名 */

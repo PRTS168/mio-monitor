@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 启动窗背景：与 Compose 开屏 verticalGradient(accent→accent2) 一致（angle 270 = 顶→底） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:startColor="#007AFF"
+        android:endColor="#5AC8FA"
+        android:type="linear" />
+</shape>

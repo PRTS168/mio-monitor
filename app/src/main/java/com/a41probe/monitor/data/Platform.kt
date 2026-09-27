@@ -24,6 +24,7 @@ object PlatformDetector {
         HISILICON("hisilicon", "海思 HiSilicon"),
         GOOGLE_TENSOR("tensor", "Google Tensor"),
         SAMSUNG("samsung", "三星 Samsung"),
+        UNISOC("unisoc", "展锐 Unisoc"),
         UNKNOWN("unknown", "未知"),
     }
 
@@ -155,6 +156,14 @@ object PlatformDetector {
         if (bp.startsWith("mt") || sm.startsWith("mt") || hw.startsWith("mt") ||
             man.contains("mediatek") || man.contains("mtk")) {
             return Platform.MTK
+        }
+        // 展锐 Unisoc（原 Spreadtrum）：boardPlatform=sp*/ums*/sc* / hardware=sprd /
+        // socManufacturer 含 unisoc/spreadtrum。
+        // 注意：高通 bp 多为代号（pineapple/taro/kalama/msmnile…），不以 sp/ums/sc 开头，
+        // 且高通判定在前（man=qualcomm 优先命中），不会误判。
+        if (bp.startsWith("sp") || bp.startsWith("ums") || bp.startsWith("sc") ||
+            hw.contains("sprd") || man.contains("unisoc") || man.contains("spreadtrum")) {
+            return Platform.UNISOC
         }
         // Exynos：boardPlatform 含 exynos/universal / socModel 含 exynos
         if (bp.contains("exynos") || bp.contains("universal") || sm.contains("exynos") ||

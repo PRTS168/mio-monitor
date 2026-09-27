@@ -1,5 +1,6 @@
 package com.a41probe.monitor.ui.screens
 
+import com.a41probe.monitor.ui.components.MioPageTitle
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,25 +36,29 @@ import com.a41probe.monitor.ui.components.DotBadge
 import com.a41probe.monitor.ui.components.pressClick
 import com.a41probe.monitor.ui.components.BarRow
 import com.a41probe.monitor.ui.components.CardTitle
-import com.a41probe.monitor.ui.components.ProbeCard
+import com.a41probe.monitor.ui.components.SafeCard
 import com.a41probe.monitor.ui.components.tempColor
 import com.a41probe.monitor.ui.components.tempFrac
 import com.a41probe.monitor.ui.theme.Ink
 import com.a41probe.monitor.ui.theme.Priv
 import kotlin.math.roundToInt
+import com.a41probe.monitor.ui.components.ScrollAware
 
 private fun f1(v: Double?): String = if (v == null) "–" else ((v * 10).roundToInt() / 10.0).toString()
 
 private data class HeadRow(val label: String, val cur: Double, val throttle: Double)
 
 /** 按 CPU/GPU/外壳/电池/NPU 五类，取每类中"当前/降频阈值"比值最高的代表 */
-private fun buildHeadroom(snap: com.a41probe.monitor.data.Snapshot): List<HeadRow> {
+private fun buildHeadroom(
+    thresholds: List<com.a41probe.monitor.data.ThermalThreshold>,
+    halTemps: List<com.a41probe.monitor.data.HalTemp>,
+): List<HeadRow> {
     val typeMap = mapOf("CPU" to "CPU", "GPU" to "GPU", "SKIN" to "外壳",
         "BATTERY" to "电池", "NPU" to "NPU")
     // P2-13: 阈值必须 >0，否则 cur/throttle 除零得 Infinity，误显成"已顶满红线"
-    return snap.thresholds.filter { (it.throttleC ?: 0.0) > 0.0 && it.type in typeMap }
+    return thresholds.filter { (it.throttleC ?: 0.0) > 0.0 && it.type in typeMap }
         .mapNotNull { th ->
-            val cur = snap.halTemps.firstOrNull { it.name == th.name }?.tempC
+            val cur = halTemps.firstOrNull { it.name == th.name }?.tempC
                 ?: return@mapNotNull null
             HeadRow(typeMap[th.type]!!, cur, th.throttleC!!)
         }
@@ -110,21 +116,34 @@ private fun ThermalStatusBadge(status: Int?) {
 /** 热力：最高/平均 + 分组热区 + 84 网格 */
 @Composable
 fun ThermalScreen(vm: MonitorViewModel) {
-    val snap by vm.snapshot.collectAsState()
-    val all = snap.thermalAll
-    val avg = snap.thermalAvg
+    // v0.28.0: 细粒度订阅——热区/冷却/HAL/权限/电池各自独立流
+    val all by vm.thermalAllFlow.collectAsState()
+    val priv by vm.privFlow.collectAsState()
+    val b by vm.batteryFlow.collectAsState()
+    val cooling by vm.coolingFlow.collectAsState()
+    val halTemps by vm.halFlow.collectAsState()
+    val status by vm.thermalStatusFlow.collectAsState()
+    val thresholds by vm.thresholdsFlow.collectAsState()
+    val avg = all.mapNotNull { it.tempC }.filter { it > 0 }
+        .let { if (it.isEmpty()) null else it.sum() / it.size }
 
+        val listState = rememberLazyListState()
+    ScrollAware(listState) {
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxWidth(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        item {
+            MioPageTitle("温度", "结温 · 外壳 · 84 区热区")
+        }
         // 最高 / 平均
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "温度概览") {
                 if (all.isEmpty()) {
                     // v20.10: 无 Shizuku 也先给出可读温度（电池温度 App 域可读），不整页空白引导
-                    val bt = snap.battery.tempC
+                    val bt = b.tempC
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
@@ -137,11 +156,11 @@ fun ThermalScreen(vm: MonitorViewModel) {
                             Box(Modifier.width(1.dp).height(44.dp).background(Ink.stroke))
                             Spacer(Modifier.width(14.dp))
                             Column(Modifier.weight(1f)) {
-                                CardTitle("84 区热区", Priv.SHIZUKU, rootActive = snap.rootAvailable)
+                                CardTitle("84 区热区", Priv.SHIZUKU, rootActive = priv.rootAvailable)
                                 Spacer(Modifier.height(3.dp))
                                 Text("未解锁", color = Ink.off, fontSize = 22.sp,
                                     fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
-                                Text(if (snap.rootAvailable) "Root 读取中…" else "需 Shizuku 授权",
+                                Text(if (priv.rootAvailable) "Root 读取中…" else "需 Shizuku 授权",
                                     color = Ink.off, fontSize = 10.sp)
                             }
                         }
@@ -152,9 +171,9 @@ fun ThermalScreen(vm: MonitorViewModel) {
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            CardTitle("最高结温", Priv.SHIZUKU, rootActive = snap.rootAvailable)
+                            CardTitle("最高结温", Priv.SHIZUKU, rootActive = priv.rootAvailable)
                             Spacer(Modifier.height(3.dp))
-                            val top = snap.maxThermal
+                            val top by vm.maxThermalFlow.collectAsState()
                             Text("${f1(top?.tempC)}°C",
                                 color = tempColor(top?.tempC), fontSize = 22.sp,
                                 fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
@@ -199,10 +218,10 @@ fun ThermalScreen(vm: MonitorViewModel) {
         }
         // 距温度红线（HAL 官方阈值 vs 当前温度）
         item {
-            val rows = remember(snap.thresholds, snap.halTemps) { buildHeadroom(snap) }
+            val rows = remember(thresholds, halTemps) { buildHeadroom(thresholds, halTemps) }
             if (rows.isNotEmpty()) {
-                ProbeCard {
-                    CardTitle("距温度红线", Priv.SHIZUKU, rootActive = snap.rootAvailable,
+                SafeCard(fallbackTitle = "距温度红线") {
+                    CardTitle("距温度红线", Priv.SHIZUKU, rootActive = priv.rootAvailable,
                         right = { Text("Thermal HAL", color = Ink.off, fontSize = 10.5.sp) })
                     Spacer(Modifier.height(6.dp))
                     rows.forEach { r ->
@@ -219,11 +238,11 @@ fun ThermalScreen(vm: MonitorViewModel) {
         }
         // 热缓解动作（cooling devices 实时等级；默认只显示已触发，避免常温 13 行灰条刷屏）
         item {
-            val devs = snap.cooling
+            val devs = cooling
             if (devs.isNotEmpty()) {
-                ProbeCard {
-                    CardTitle("热缓解动作", Priv.SHIZUKU, rootActive = snap.rootAvailable,
-                        right = { ThermalStatusBadge(snap.thermalStatus) })
+                SafeCard(fallbackTitle = "热缓解动作") {
+                    CardTitle("热缓解动作", Priv.SHIZUKU, rootActive = priv.rootAvailable,
+                        right = { ThermalStatusBadge(status) })
                     Spacer(Modifier.height(6.dp))
                     var expanded by remember { mutableStateOf(false) }
                     val ordered = remember(devs) {
@@ -263,12 +282,12 @@ fun ThermalScreen(vm: MonitorViewModel) {
             }
         }
         // 分组热区
-        item { GroupedZones(all, snap.rootAvailable) }
+        item { GroupedZones(all, priv.rootAvailable) }
         // 84 网格
         item {
-            ProbeCard {
+            SafeCard(fallbackTitle = "84 区网格") {
                 CardTitle(if (all.isEmpty()) "全部 84 区" else "全部 ${all.size} 区", Priv.SHIZUKU,
-                    rootActive = snap.rootAvailable)
+                    rootActive = priv.rootAvailable)
                 Spacer(Modifier.height(8.dp))
                 Grid84(all)
                 Spacer(Modifier.height(6.dp))
@@ -286,7 +305,8 @@ fun ThermalScreen(vm: MonitorViewModel) {
                 modifier = Modifier.padding(horizontal = 4.dp))
         }
         item { Spacer(Modifier.height(4.dp)) }
-    }
+    
+    }}
 }
 
 private val GROUP_KEYS = listOf(
@@ -328,7 +348,7 @@ private fun GroupedZones(all: List<ThermalZone>, rootActive: Boolean) {
         }.filter { (_, items, _) -> items.isNotEmpty() }
     }
     groups.forEach { (title, items, total) ->
-        ProbeCard {
+        SafeCard(fallbackTitle = "热区分组") {
             CardTitle(title, Priv.SHIZUKU, rootActive = rootActive)
             Spacer(Modifier.height(2.dp))
             items.forEach { z ->

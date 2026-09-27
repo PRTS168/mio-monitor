@@ -16,7 +16,7 @@ data class DiscoveredTarget(
 )
 
 /**
- * 监控端 mDNS 发现：扫描 `_a41probe._tcp`。
+ * 监控端 mDNS 发现：扫描 `_mio._tcp`。
  * NsdManager 同一时刻只允许 resolve 一个服务，故用队列串行 resolve。
  * 设备详情（型号/权限档/指标）一律以 TCP hello/snapshot 为准，不依赖 TXT（兼容低版本）。
  */
@@ -112,7 +112,7 @@ class MonitorNsdDiscovery(context: Context) {
     }
 
     companion object {
-        const val SERVICE_TYPE = "_a41probe._tcp."
+        const val SERVICE_TYPE = "_mio._tcp."
         private const val TAG = "MonDiscovery"
         private const val RESOLVE_TIMEOUT_MS = 5_000L
     }

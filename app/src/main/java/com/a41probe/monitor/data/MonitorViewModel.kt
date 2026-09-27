@@ -66,7 +66,46 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
     private val _cpuTotalPercent = MutableStateFlow<Double?>(null)
     val cpuTotalPercent: StateFlow<Double?> = _cpuTotalPercent.asStateFlow()
 
+    // ===== v0.28.0 性能：细粒度订阅流 =====
+    // 页面不再整页 collect snapshot（每秒全量重组→滚动掉帧），
+    // 各卡片/页面只订阅自己需要的数据类；data class equals 做结构比较，无变化不 emit。
+    // battery/gpu 保持非空（页面直接 b.xxx / g.xxx 调用，缺失时用默认对象）
+    private val _batteryFlow = MutableStateFlow(BatteryData())
+    val batteryFlow: StateFlow<BatteryData> = _batteryFlow.asStateFlow()
+    private val _memFlow = MutableStateFlow<MemInfo?>(null)
+    val memFlow: StateFlow<MemInfo?> = _memFlow.asStateFlow()
+    private val _coresFlow = MutableStateFlow<List<CpuCore>>(emptyList())
+    val coresFlow: StateFlow<List<CpuCore>> = _coresFlow.asStateFlow()
+    private val _gpuFlow = MutableStateFlow(GpuData())
+    val gpuFlow: StateFlow<GpuData> = _gpuFlow.asStateFlow()
+    private val _loadFlow = MutableStateFlow<String?>(null)
+    val loadFlow: StateFlow<String?> = _loadFlow.asStateFlow()
+    private val _thermalAllFlow = MutableStateFlow<List<ThermalZone>>(emptyList())
+    val thermalAllFlow: StateFlow<List<ThermalZone>> = _thermalAllFlow.asStateFlow()
+    private val _coolingFlow = MutableStateFlow<List<CoolingDev>>(emptyList())
+    val coolingFlow: StateFlow<List<CoolingDev>> = _coolingFlow.asStateFlow()
+    private val _maxThermalFlow = MutableStateFlow<ThermalZone?>(null)
+    val maxThermalFlow: StateFlow<ThermalZone?> = _maxThermalFlow.asStateFlow()
+    private val _halFlow = MutableStateFlow<List<HalTemp>>(emptyList())
+    val halFlow: StateFlow<List<HalTemp>> = _halFlow.asStateFlow()
+    private val _thermalStatusFlow = MutableStateFlow<Int?>(null)
+    val thermalStatusFlow: StateFlow<Int?> = _thermalStatusFlow.asStateFlow()
+    private val _thresholdsFlow = MutableStateFlow<List<ThermalThreshold>>(emptyList())
+    val thresholdsFlow: StateFlow<List<ThermalThreshold>> = _thresholdsFlow.asStateFlow()
+    private val _privFlow = MutableStateFlow(PrivUi())
+    val privFlow: StateFlow<PrivUi> = _privFlow.asStateFlow()
+
+    /** 提权三态 + Root（顶部徽章 / 卡片权限标识共用，变化频率极低） */
+    data class PrivUi(
+        val shizukuActive: Boolean = false,
+        val shizukuServiceUp: Boolean = false,
+        val rootAvailable: Boolean = false,
+    )
+
     private var job: Job? = null
+    // v0.26.4: 后台保温——ON_STOP 后 3s 低频采样（数据常新），回前台立即唤醒一帧
+    @Volatile private var background = false
+    private val wake = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
     private var ctx: Context = app.applicationContext
     private val collector = SnapshotCollector(ctx)
 
@@ -88,6 +127,19 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             ShizukuBridge.refresh()
             RootBridge.refresh()
+        }
+        // v0.27.0: Thermal HAL 独立协程刷新——dumpsys 慢，移出主采集热路径，不拖慢 1s 帧
+        viewModelScope.launch(Dispatchers.IO) {
+            while (true) {
+                val exec: ((String) -> String?)? = when {
+                    RootBridge.available -> { c -> RootBridge.exec(c) }
+                    ShizukuBridge.active && ShizukuBridge.authorized -> { c -> ShizukuBridge.exec(c) }
+                    else -> null
+                }
+                if (exec != null) runCatching { ThermalHalReader.get(exec) }
+                // 先 get 再 delay（冷启动即有 HAL 缓存）；后台拉长到 15s 少拉 dumpsys（P2-UI-1）
+                delay(if (background) 15000L else 4500L)
+            }
         }
     }
 
@@ -135,6 +187,14 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
         if (job != null) return
         _running.value = true
         job = viewModelScope.launch {
+            // v0.27.0: 冷启动先推 App 域轻快照（<100ms），首屏不再"启动中"全"–"数秒
+            if (_lastSuccessAt.value == 0L) {
+                val q = withContext(Dispatchers.IO) { runCatching { collector.collectQuick() } }
+                q.getOrNull()?.let {
+                    _snapshot.value = it
+                    _lastSuccessAt.value = System.currentTimeMillis()
+                }
+            }
             while (true) {
                 val started = System.currentTimeMillis()
                 try {
@@ -146,17 +206,39 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
                     _cpuTotalPercent.value = snap.cpuTotalPercent
                     updateHist(snap)
                     _snapshot.value = snap.copy(sampleMs = System.currentTimeMillis() - started)
+                    syncDerived(snap)
                     _lastSuccessAt.value = System.currentTimeMillis()
                     _isStale.value = false
                 } catch (t: Throwable) {
                     if (t is CancellationException) throw t
-                    if (BuildConfig.DEBUG) android.util.Log.w("A41VM", "collect failed", t)
+                    if (BuildConfig.DEBUG) android.util.Log.w("MioVM", "collect failed", t)
                 }
                 val elapsed = System.currentTimeMillis() - started
                 _isStale.value = System.currentTimeMillis() - _lastSuccessAt.value > 3000
-                delay((1000 - elapsed).coerceAtLeast(100))
+                // v0.26.4: 后台 3s 低频 / 前台 1s；setBackground(false) 经 wake 通道立即唤醒
+                val interval = if (background) 3000L else 1000L
+                val wait = (interval - elapsed).coerceAtLeast(50)
+                runCatching { kotlinx.coroutines.withTimeoutOrNull(wait) { wake.receive() } }
             }
         }
+    }
+
+    /** v0.28.0: 采集/merge 后同步细粒度流——data class equals 判变，未变不 emit（无重组） */
+    private fun syncDerived(s: Snapshot) {
+        if (s.battery != _batteryFlow.value) _batteryFlow.value = s.battery
+        if (s.mem != _memFlow.value) _memFlow.value = s.mem
+        if (s.cores != _coresFlow.value) _coresFlow.value = s.cores
+        if (s.gpu != _gpuFlow.value) _gpuFlow.value = s.gpu
+        if (s.loadStr != _loadFlow.value) _loadFlow.value = s.loadStr
+        if (s.thermalAll != _thermalAllFlow.value) _thermalAllFlow.value = s.thermalAll
+        if (s.cooling != _coolingFlow.value) _coolingFlow.value = s.cooling
+        val mt = s.maxThermal
+        if (mt != _maxThermalFlow.value) _maxThermalFlow.value = mt
+        if (s.halTemps != _halFlow.value) _halFlow.value = s.halTemps
+        if (s.thermalStatus != _thermalStatusFlow.value) _thermalStatusFlow.value = s.thermalStatus
+        if (s.thresholds != _thresholdsFlow.value) _thresholdsFlow.value = s.thresholds
+        val pu = PrivUi(s.shizukuActive, s.shizukuServiceUp, s.rootAvailable)
+        if (pu != _privFlow.value) _privFlow.value = pu
     }
 
     /** 历史曲线：读不到（null）不补 0，避免"假下探"；缺失即不追加。全存原始值。 */
@@ -171,7 +253,9 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
         s.gpu.busyPercent?.let { _busyHist.value = (_busyHist.value + it.toFloat()).takeLast(max) }
         s.battery.voltage?.let { _voltHist.value = (_voltHist.value + it.toFloat()).takeLast(max) }
         s.battery.currentDisplay?.let { _curHist.value = (_curHist.value + it.toFloat()).takeLast(max) }
-        s.battery.powerShown?.let { _powerHist.value = (_powerHist.value + it.toFloat()).takeLast(max) }
+        // 功率曲线与 hero 大数字同源：统一读 uiPowerW（满电0/输入侧优先/回退电池侧/钳0..150）
+        val pw = s.battery.uiPowerW
+        pw?.let { _powerHist.value = (_powerHist.value + it.toFloat()).takeLast(max) }
         s.battery.tempC?.let { _tempHist.value = (_tempHist.value + it.toFloat()).takeLast(max) }
         s.gpu.temp0C?.let { _gpuTempHist.value = (_gpuTempHist.value + it.toFloat()).takeLast(max) }
         _cpuTotalPercent.value?.let { _cpuTotalHist.value = (_cpuTotalHist.value + it.toFloat()).takeLast(max) }
@@ -180,6 +264,29 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun stop() {
         job?.cancel(); job = null; _running.value = false
+    }
+
+    /** v0.26.4: 前后台切换——后台降频保温，回前台立即唤醒一帧（消除"切回等几秒"） */
+    fun setBackground(b: Boolean) {
+        background = b
+        if (!b) runCatching { wake.trySend(Unit) }
+    }
+
+    /** v0.27.0: 回前台立即推 App 域轻快照（<100ms）；仅当现有数据旧于 2s 才覆盖，避免打断新鲜帧 */
+    fun quickRefresh() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val q = runCatching { collector.collectQuick() }.getOrNull() ?: return@launch
+            if (System.currentTimeMillis() - _lastSuccessAt.value > 2000) {
+                // 只 merge App 域 battery/mem，保留提权富帧（cores/gpu/thermal/hal），不整帧倒退（P1-UI-1）
+                _snapshot.value = _snapshot.value.copy(
+                    battery = q.battery,
+                    mem = q.mem,
+                    memTotalMB = q.memTotalMB,
+                )
+                syncDerived(_snapshot.value)
+                _lastSuccessAt.value = System.currentTimeMillis()
+            }
+        }
     }
 
     fun refreshShizuku() {
@@ -194,6 +301,7 @@ class MonitorViewModel(app: Application) : AndroidViewModel(app) {
                 shizukuAuthorized = ShizukuBridge.active && ShizukuBridge.authorized,
                 rootAvailable = RootBridge.available,
             )
+            syncDerived(_snapshot.value)
         }
     }
 

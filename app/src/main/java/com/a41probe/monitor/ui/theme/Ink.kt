@@ -2,7 +2,7 @@ package com.a41probe.monitor.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// ===== 设计令牌（v7 对标搞机牛：iOS 视觉语言，蓝白体系） =====
+// ===== 设计令牌（iOS 视觉语言，蓝白体系） =====
 object Ink {
     val bg = Color(0xFFF2F2F7)          // 页面底色（iOS 系统灰）
     val card = Color(0xFFFFFFFF)        // 卡片纯白
