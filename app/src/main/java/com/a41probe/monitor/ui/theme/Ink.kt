@@ -1,45 +1,69 @@
 package com.a41probe.monitor.ui.theme
 
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
 
-// ===== 设计令牌（iOS 视觉语言，蓝白体系） =====
+/* ===== 设计令牌（iOS 视觉语言）=====
+ * v1.1：令牌**名字与类型完全不变**，内部改为读取可切换的 Palette（Compose 状态）。
+ * 因此全工程几百处 `Ink.xxx` 调用点一个字都不用改，切换主题自动重组、即时生效。
+ * 语义色（温度红/橙/绿、警告/危险）固定不随主题变化——见 Palette.kt 说明。 */
+private val paletteState = mutableStateOf(Palettes.BLUE)
+
 object Ink {
-    val bg = Color(0xFFF2F2F7)          // 页面底色（iOS 系统灰）
-    val card = Color(0xFFFFFFFF)        // 卡片纯白
-    val panel = Color(0xFFEEEEF0)       // 嵌套灰底小块（L2: 与页面底拉开 ~8 灰阶，强光下可辨）
-    val stroke = Color(0xFFE5E5EA)      // 分隔线
-    val tx = Color(0xFF1C1C1E)          // 主文字（iOS label）
-    val tx2 = Color(0xFF8E8E93)         // 次级文字（iOS secondary）
-    val tx3 = Color(0xFF6D6D72)         // 口径说明小字（L1: 对比度 ≥4.5:1）
-    val off = Color(0xFF8F8F95)         // 置灰/不可用（M13：由 AEAEB2 加深，小字达 ~3.2:1）
+    val bg: Color get() = paletteState.value.bg
+    val card: Color get() = paletteState.value.card
+    val panel: Color get() = paletteState.value.panel
+    val stroke: Color get() = paletteState.value.stroke
 
-    val accent = Color(0xFF007AFF)      // 主强调（iOS 蓝）
-    val accent2 = Color(0xFF5AC8FA)     // 渐变末端（iOS 浅蓝）
-    val ok = Color(0xFF34C759)          // 正常/健康（iOS 绿）
-    val warn = Color(0xFFFF9500)        // 警告（iOS 橙）
-    val danger = Color(0xFFFF3B30)      // 危险/高温（iOS 红）
-    val m = Color(0xFF4FA3D1)           // 次要强调（Material secondary 映射）
+    val tx: Color get() = paletteState.value.tx        // 主文字
+    val tx2: Color get() = paletteState.value.tx2      // 次级文字
+    val tx3: Color get() = paletteState.value.tx3      // 口径说明小字
+    val off: Color get() = paletteState.value.off      // 置灰/不可用
 
-    // 簇角色色（跨屏统一引用，勿在 Screen 内重复硬编码；按簇 maxMHz 降序分配角色）
-    val clusterPrime = Color(0xFFE07B39)   // 最大性能核 · 暖橙（原 X2 色）
-    val clusterPerf = Color(0xFF4A86D8)     // 中性能核 · 蓝（原 A710 色）
-    val clusterEff = Color(0xFF2F9E8F)      // 能效核 · 青绿（原 A510 色）
-    val clusterBal = Color(0xFF9B59B6)     // 第4簇平衡核 · 紫（新增）
+    val accent: Color get() = paletteState.value.accent
+    val accent2: Color get() = paletteState.value.accent2
+    /** 压在强调色上的文字/图标色（浅色主题用深色文字，默认蓝用白色） */
+    val onAccent: Color get() = paletteState.value.onAccent
+    /** 强调色浅底：选中态 / Tab 指示器 */
+    val accentSoft: Color get() = paletteState.value.accentSoft
+    /** 曲线主色：比 accent 柔和一档 */
+    val curve: Color get() = paletteState.value.curve
+    /** 阴影色：带主题色温 */
+    val shadowTint: Color get() = paletteState.value.shadowTint
+    val m: Color get() = paletteState.value.accent2
 
-    // 图标浅底色（O8：传感器等图标圆底，iOS 8 色体系）
-    val iconBgBlue = Color(0xFFE5F1FF)
-    val iconBgCyan = Color(0xFFE6F9FF)
-    val iconBgGreen = Color(0xFFE3F9E8)
-    val iconBgOrange = Color(0xFFFFF2E6)
-    val iconBgPurple = Color(0xFFF2E6FF)
-    val iconBgYellow = Color(0xFFFFF9E6)
+    // 语义色：固定
+    val ok = Color(0xFF34C759)
+    val warn = Color(0xFFFF9500)
+    val danger = Color(0xFFFF3B30)
+
+    val clusterPrime: Color get() = paletteState.value.clusterPrime
+    val clusterPerf: Color get() = paletteState.value.clusterPerf
+    val clusterEff: Color get() = paletteState.value.clusterEff
+    val clusterBal: Color get() = paletteState.value.clusterBal
+
+    val iconBgBlue: Color get() = paletteState.value.iconBgBlue
+    val iconBgCyan: Color get() = paletteState.value.iconBgCyan
+    val iconBgGreen: Color get() = paletteState.value.iconBgGreen
+    val iconBgOrange: Color get() = paletteState.value.iconBgOrange
+    val iconBgPurple: Color get() = paletteState.value.iconBgPurple
+    val iconBgYellow: Color get() = paletteState.value.iconBgYellow
+
+    internal fun applyPalette(p: Palette) { paletteState.value = p }
 }
 
-// 提权档位标注（浅色下：灰 / 蓝 / 橙）
-enum class Priv(val tag: String, val color: Color) {
-    FREE("—", Ink.off),      // 免提权
-    SHIZUKU("S", Ink.accent), // Shizuku
-    ROOT("R", Ink.warn);    // 仅 Root
+// 提权档位标注：颜色改为计算属性，随主题即时变化（原先写死在枚举构造参数里，换肤不生效）
+enum class Priv(val tag: String) {
+    FREE("—"),
+    SHIZUKU("S"),
+    ROOT("R");
+
+    val color: Color get() = when (this) {
+        FREE -> Ink.off
+        SHIZUKU -> Ink.accent
+        ROOT -> Ink.warn
+    }
+
     companion object { fun of(tag: String) = entries.firstOrNull { it.tag == tag } ?: FREE }
 }
 

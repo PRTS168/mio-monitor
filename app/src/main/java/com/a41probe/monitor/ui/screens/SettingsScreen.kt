@@ -3,6 +3,16 @@ package com.a41probe.monitor.ui.screens
 import com.a41probe.monitor.ui.components.GlassConfig
 import com.a41probe.monitor.ui.components.GlassLevel
 import com.a41probe.monitor.ui.components.HapticLevel
+import com.a41probe.monitor.ui.theme.Palettes
+import com.a41probe.monitor.ui.theme.ThemeConfig
+import com.a41probe.monitor.ui.theme.SpecialConfig
+import com.a41probe.monitor.ui.theme.Specials
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.border
 import com.a41probe.monitor.ui.components.MioHaptics
 import com.a41probe.monitor.ui.components.rememberHaptics
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -524,8 +534,96 @@ fun SettingsScreen(
                                 .padding(vertical = 10.dp),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Text(label, color = if (sel) Color.White else Ink.tx2,
+                            Text(label, color = if (sel) Ink.onAccent else Ink.tx2,
                                 fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(14.dp))
+                // v1.1 第 1 批：配色主题（全局强调色 + 页面底色；立绘与语义色不变）
+                Text("配色：切换全局强调色与页面底色。温度红/橙/绿等语义色保持不变，避免影响数据判读。",
+                    color = Ink.tx2, fontSize = 11.sp, lineHeight = 16.sp)
+                Spacer(Modifier.height(8.dp))
+                var palSel by remember { mutableStateOf(ThemeConfig.current()) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Palettes.ALL.forEach { p ->
+                        val sel = palSel.id == p.id
+                        Box(
+                            Modifier.weight(1f)
+                                .height(34.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (sel) p.accent.copy(alpha = 0.14f) else Color(0xFFF2F2F7))
+                                .border(
+                                    width = if (sel) 1.5.dp else 0.dp,
+                                    color = if (sel) p.accent else Color.Transparent,
+                                    shape = RoundedCornerShape(10.dp),
+                                )
+                                .clickable { palSel = p; ThemeConfig.set(ctx, p) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(
+                                Modifier.width(18.dp).height(18.dp)
+                                    .clip(RoundedCornerShape(9.dp))
+                                    .background(p.accent)
+                            )
+                        }
+                    }
+                }
+                // v1.3: 特殊预设（角色）——与配色预设分开：整组换立绘 + 配色，可单独微调
+                // 只有默认角色时整段隐藏（角色素材不随仓库分发，缺失的角色预设自动不出现）
+                val specials = Specials.all()
+                if (specials.size > 1) {
+                    Spacer(Modifier.height(14.dp))
+                    Text("角色预设：整组切换立绘与配色。和上面的配色预设相互独立——先挑角色，再用配色微调。",
+                        color = Ink.tx2, fontSize = 11.sp, lineHeight = 16.sp)
+                    Spacer(Modifier.height(8.dp))
+                    var specSel by remember { mutableStateOf(SpecialConfig.current()) }
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        specials.forEach { s ->
+                            val sel = specSel.id == s.id
+                            val tint = s.palette?.accent ?: Ink.accent
+                            Row(
+                                modifier = Modifier.fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (sel) tint.copy(alpha = 0.12f) else Color(0xFFF2F2F7))
+                                    .border(
+                                        width = if (sel) 1.5.dp else 0.dp,
+                                        color = if (sel) tint else Color.Transparent,
+                                        shape = RoundedCornerShape(12.dp),
+                                    )
+                                    .clickable {
+                                        specSel = s
+                                        SpecialConfig.set(ctx, s)
+                                        // 角色自带配色时一并套用；澪不绑定配色，保留当前配色预设
+                                        s.palette?.let { p ->
+                                            palSel = p
+                                            ThemeConfig.set(ctx, p)
+                                        }
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                val th = s.thumbRes()
+                                if (th != 0) {
+                                    Image(
+                                        painter = painterResource(th),
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.size(34.dp).clip(CircleShape),
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                }
+                                Column(Modifier.weight(1f)) {
+                                    Text(s.label, color = Ink.tx, fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold)
+                                    Text(s.subtitle, color = Ink.tx2, fontSize = 11.sp)
+                                }
+                                if (sel) {
+                                    Text("当前", color = tint, fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold)
+                                }
+                            }
                         }
                     }
                 }
@@ -564,7 +662,7 @@ fun SettingsScreen(
                                 .padding(vertical = 14.dp),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Text(label, color = if (sel) Color.White else Ink.tx2,
+                            Text(label, color = if (sel) Ink.onAccent else Ink.tx2,
                                 fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
@@ -642,6 +740,26 @@ fun SettingsScreen(
             SafeCard(fallbackTitle = "关于") {
                 CardTitle("关于")
                 StatRow("App", "v${BuildConfig.VERSION_NAME} · 纯只读", stateColor = Ink.accent)
+                // v1.3.0: 当前角色（头像随角色预设变化；素材缺失则不画图只留文字）
+                val curSpec = SpecialConfig.current()
+                val curThumb = curSpec.thumbRes()
+                if (curThumb != 0) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Image(
+                            painter = painterResource(curThumb),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.size(34.dp).clip(CircleShape),
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text("当前角色", color = Ink.tx2, fontSize = 11.sp)
+                            Text(curSpec.label, color = Ink.tx, fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
             }
         }
         item {

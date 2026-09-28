@@ -716,6 +716,51 @@ object GpuReader {
             name.contains("powervr")
 }
 
+/* v1.0.1 修复（真机实测 2026-09-27）：/sys/class/thermal 里混着大量**不是温度**的节点，
+ * 以及内核从不更新的占位/失效节点，之前被一律当"实时温度"显示并按温度上色（红/橙/绿），
+ * 表现为"某个热区数值卡死、重启无效"。实测 87 个 zone 里 10 秒内有 52 个完全不变，其中：
+ *   - -273000（传感器未接/未初始化）如 mmw0..3 / sdr1* / mmw-ific0
+ *   - 恒定占位值如 pm8350c_tz=37000、pm8350b_tz、cpuss-0=33100、camera-0/1=31400
+ *   - 根本不是温度：bcl-lvl*、sub1*、mmw_pa*、socd、vbat、usb、ibat-lvl*、sdr*、isense_trim
+ * 处理：非温度节点直接不进温度列表与统计；哨兵值（≤ -200°C）同理剔除。
+ * 说明：这两个判定放在文件级，供 ThermalReader 与批量读取通道共用。 */
+private val NON_TEMP_PATTERNS = listOf(
+    "bcl-lvl", "bcl_lvl", "ibat-lvl", "sub1", "mmw_pa", "mmw-", "sdr", "socd",
+    "vbat", "usb", "isense_trim", "_pa", "modem-cfg", "lte-cc",
+)
+
+/** 是否为"温度类"节点（排除标志位/电压/电流/状态类节点） */
+private fun isTemperatureZone(name: String): Boolean =
+    NON_TEMP_PATTERNS.none { name.contains(it, ignoreCase = true) }
+
+/** 哨兵值判定：≤ -200°C 视为"传感器不存在"（内核填 -273000 之类） */
+private fun isSentinel(tempMC: Int?): Boolean = tempMC != null && tempMC <= -200_000
+
+/* v1.0.2 修复：**数值貌似正常、其实内核从不更新**的热区（用户反馈"某个热区卡死"）。
+ * 实测：ToF therm 恒 46.9°、pm8350c_tz 恒 37.0°、camera-0/1 恒 31.4°、cpuss-0 恒 33.1° 等，
+ * 10 秒内 52/87 个 zone 完全不变——重启当然无效，因为内核本来就不喂数据。
+ * 判定：同一 zone 的原始 m°C 连续 [STALE_SAMPLES] 次采样完全相同 → 视为"未上报"，不再显示、
+ * 不参与最高结温/平均/距温度红线等任何统计。
+ * 阈值取 45 次（前台约 45 秒）：真实温度在一个运行中的机器上几乎不可能 45 秒零变化，
+ * 而失效占位值永远不变，因此这一判据能稳定区分两者。 */
+private const val STALE_SAMPLES = 45
+/** 判据从"逐位相同"放宽为"相邻采样波动 ≤ 0.3°C"（v1.0.3）。
+ *  原因：ToF therm 这类失灵传感器（实测恒显示 46.9°）原始值其实在 46850↔46900 之间微跳，
+ *  "逐位相同"永远不触发；按显示精度（0.1°C）判断才能覆盖。
+ *  真实热区在 45 秒内的漂移远大于 0.3°C，因此不会误伤。 */
+private const val STALE_DRIFT_MC = 300
+private val zoneTrack = HashMap<Int, Pair<Int?, Int>>()   // zoneId -> (上次 tempMC, 连续稳定次数)
+
+/** 记录本次采样并返回该 zone 是否已达"未上报"判据 */
+private fun staleZone(id: Int, tempMC: Int?): Boolean {
+    val prev = zoneTrack[id]
+    val stable = prev != null && prev.first != null && tempMC != null &&
+        kotlin.math.abs(tempMC - prev.first!!) <= STALE_DRIFT_MC
+    val count = if (stable) prev!!.second + 1 else 0
+    zoneTrack[id] = tempMC to count
+    return count >= STALE_SAMPLES
+}
+
 /** 热区：84 zone。App 域 EACCES → NEED_PRIV；Shizuku 激活时整表读取 */
 object ThermalReader {
 
@@ -723,8 +768,11 @@ object ThermalReader {
     fun readAppDomain(): List<ThermalZone> {
         val root = thermalRoot()
         val zones = zoneNames(root)
-        return zones.map { z ->
+        return zones.mapNotNull { z ->
+            if (!isTemperatureZone(z.second)) return@mapNotNull null
             val v = Sysfs.readInt("$root/thermal_zone${z.first}/temp")
+            if (isSentinel(v)) return@mapNotNull null
+            if (staleZone(z.first, v)) return@mapNotNull null   // v1.0.2: 长期不更新 → 视为未上报
             // v0.28.2: 物理范围钳制 -40..150°C，超界 → tempC=null（占位 NEED_PRIV），raw m°C 仍留证
             val tc = Units.safeTemp(v?.div(1000.0))
             ThermalZone(z.first, z.second, tc,
@@ -916,7 +964,10 @@ object BulkReader {
                     val id = l.substringAfter("thermal_zone").substringBefore("/").toIntOrNull()
                     val v = l.substringAfterLast(":").trim().toIntOrNull()
                     val name = types[id]
-                    if (id != null && name != null) {
+                    // v1.0.1: 非温度节点与哨兵值（≤ -200°C，传感器不存在）不进列表与统计
+                    // v1.0.2: 长期零变化（内核不更新）的节点同样剔除
+                    if (id != null && name != null && isTemperatureZone(name) &&
+                        !isSentinel(v) && !staleZone(id, v)) {
                         // v0.28.2: 物理范围钳制 -40..150°C，超界 → tempC=null（UNAVAILABLE），raw m°C 仍留证
                         val tc = Units.safeTemp(v?.div(1000.0))
                         zones.add(ThermalZone(id, name, tc,

@@ -80,6 +80,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.a41probe.monitor.R
 import com.a41probe.monitor.data.MonitorViewModel
 import com.a41probe.monitor.ui.components.MioArtBackground
+import com.a41probe.monitor.ui.components.SpecialFace
+import com.a41probe.monitor.ui.theme.ThemeConfig
+import com.a41probe.monitor.ui.theme.SpecialConfig
 import com.a41probe.monitor.ui.components.DotBadge
 import com.a41probe.monitor.ui.components.Motion
 import com.a41probe.monitor.ui.components.rememberAnimatorScale
@@ -220,6 +223,8 @@ fun MainScreen(vm: MonitorViewModel = viewModel()) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // v1.3: 特殊预设（角色）——立绘/表情按当前预设解析，缺项自动回落澪
+    val special = SpecialConfig.current()
     Box(Modifier.fillMaxSize().background(Ink.bg)) {
         Column(Modifier.fillMaxSize()) {
             AppBarRow(
@@ -232,7 +237,7 @@ fun MainScreen(vm: MonitorViewModel = viewModel()) {
             )
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 // v0.25: 澪背景立绘——固定于内容区右下，雾玻璃卡片透出角色
-                MioArtBackground(artForScreen(screen))
+                MioArtBackground(special.artFor(artKeyFor(screen)))
                 // v20.17(P1-7): tab 转场收敛为纯淡入淡出 150ms——iOS tab 无位移无缩放，
                 // 移动+缩放+淡入三件套叠加是"每切一次都晃一下"的来源
                 // P2-9: Reduce Motion 时 tab 转场直切（时长 0）
@@ -318,7 +323,7 @@ fun MainScreen(vm: MonitorViewModel = viewModel()) {
                 // 立绘：贴底、高 78% 屏、FillHeight——两侧透明留白被框自然裁去、角色无损；
                 // 脚贴屏幕底边、脸完整位于屏幕上 1/3，任何帧都不平切
                 Image(
-                    painter = painterResource(R.drawable.mio_dashboard),
+                    painter = painterResource(special.artFor("dashboard")),
                     contentDescription = null,
                     contentScale = ContentScale.FillHeight,
                     modifier = Modifier
@@ -340,16 +345,16 @@ fun MainScreen(vm: MonitorViewModel = viewModel()) {
                         .graphicsLayer { alpha = wordA },
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Text("Mio 澪", color = Color.White, fontSize = 30.sp,
+                    Text("Mio 澪", color = Ink.onAccent, fontSize = 30.sp,
                         fontWeight = FontWeight.Bold, letterSpacing = 3.sp)
                     Spacer(Modifier.height(10.dp))
-                    Text("参数监控 · 纯只读", color = Color.White.copy(alpha = 0.85f),
+                    Text("参数监控 · 纯只读", color = Ink.onAccent.copy(alpha = 0.85f),
                         fontSize = 13.sp, letterSpacing = 1.5.sp)
                     // 版本读空时整行省略，不留空位
                     if (ver.isNotEmpty()) {
                         Spacer(Modifier.height(9.dp))
                         Text("v$ver · ${Build.MODEL}",
-                            color = Color.White.copy(alpha = 0.6f), fontSize = 10.5.sp,
+                            color = Ink.onAccent.copy(alpha = 0.6f), fontSize = 10.5.sp,
                             letterSpacing = 0.5.sp)
                     }
                 }
@@ -399,11 +404,11 @@ private fun AppBarRow(
             modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-        Text("Mio 澪", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+        Text("Mio 澪", color = Ink.onAccent, fontSize = 14.sp, fontWeight = FontWeight.Bold,
             letterSpacing = 0.5.sp)
         Spacer(Modifier.width(8.dp))
         // O12: 长机型名不挤压右侧徽章
-        Text(Build.MODEL, color = Color.White.copy(alpha = 0.8f), fontSize = 10.5.sp,
+        Text(Build.MODEL, color = Ink.onAccent.copy(alpha = 0.8f), fontSize = 10.5.sp,
             maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f, fill = false).then(Modifier.padding(end = 8.dp)))
         Spacer(Modifier.weight(1f))
@@ -411,7 +416,7 @@ private fun AppBarRow(
             when {
                 // v20.11: Root 优先于 Shizuku 显示（橙点 R）
                 rootAvailable -> DotBadge(Ink.warn, "Root", onBlue = true)
-                authorized -> DotBadge(Color.White, "Shizuku", onBlue = true)
+                authorized -> DotBadge(Ink.onAccent, "Shizuku", onBlue = true)
                 serviceUp -> DotBadge(Ink.warn, "待授权", onBlue = true)
                 else -> DotBadge(Ink.off, "免提权", onBlue = true)
             }
@@ -432,7 +437,7 @@ private fun AppBarRow(
             ).value
         } else 1f
         DotBadge(
-            if (fresh) Color.White else Ink.warn,
+            if (fresh) Ink.onAccent else Ink.warn,
             if (ageMs == Long.MAX_VALUE) "启动中" else if (fresh) "实时" else "停更 ${ageMs / 1000}s",
             onBlue = true,
             alpha = badgeAlpha,
@@ -539,18 +544,8 @@ private fun PrivGuideSheet(
                 Text("澪来解释三档权限", color = Ink.tx, fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold)
             }
-            // v0.26.4: 头部特写资源——小框内脸完整可读
-            Box(
-                Modifier.size(76.dp).clip(RoundedCornerShape(12.dp)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Image(
-                    painterResource(R.drawable.mio_expr_think_head),
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
+            // v0.26.4 / v1.3.0: 表情小图统一走 SpecialFace（随角色预设换人）
+            SpecialFace("think_head", Modifier.size(76.dp))
         }
         Spacer(Modifier.height(12.dp))
         PrivGuideRow("—", "免提权", "电量 · CPU 频率 · 传感器等基础参数")
@@ -597,14 +592,14 @@ private fun PrivGuideRow(tag: String, name: String, desc: String) {
     }
 }
 
-/** 当前页面 → 背景立绘资源（0=不绘制：双模式/远程详情页保持纯色底） */
-private fun artForScreen(s: Screen): Int = when (s) {
-    Screen.DASH -> R.drawable.mio_dashboard
-    Screen.CPU -> R.drawable.mio_cpu
-    Screen.GPU -> R.drawable.mio_gpu
-    Screen.BAT -> R.drawable.mio_battery
-    Screen.THERM -> R.drawable.mio_thermal
-    Screen.SENS -> R.drawable.mio_sensor
-    Screen.SET -> R.drawable.mio_settings
-    else -> 0
+/** 当前页面 → 立绘 key（特殊预设与澪默认共用同一套 key） */
+private fun artKeyFor(s: Screen): String = when (s) {
+    Screen.DASH -> "dashboard"
+    Screen.CPU -> "cpu"
+    Screen.GPU -> "gpu"
+    Screen.BAT -> "battery"
+    Screen.THERM -> "thermal"
+    Screen.SENS -> "sensor"
+    Screen.SET -> "settings"
+    else -> ""
 }

@@ -50,6 +50,7 @@ import com.a41probe.monitor.data.remote.PrivLevel
 import com.a41probe.monitor.ui.components.BrandKeepAlive
 import com.a41probe.monitor.ui.components.ProbeButton
 import com.a41probe.monitor.ui.components.SafeCard
+import com.a41probe.monitor.ui.components.SpecialFace
 import com.a41probe.monitor.ui.theme.Ink
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
@@ -284,7 +285,15 @@ fun AgentScreen(
                 }
                 Spacer(Modifier.height(8.dp))
                 if (clients.isEmpty()) {
-                    Text("暂无监控端连接", color = Ink.tx3, fontSize = 12.5.sp)
+                    // v1.3.0: 空态表情（随角色预设换人）——"等着被连"用招手
+                    Column(
+                        Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        SpecialFace("hi_head", Modifier.fillMaxWidth().height(104.dp))
+                        Spacer(Modifier.height(6.dp))
+                        Text("暂无监控端连接", color = Ink.tx3, fontSize = 12.5.sp)
+                    }
                 } else {
                     clients.forEach { c ->
                         InfoRow(c.host, "自 ${fmtTime(c.connectedAt)}")

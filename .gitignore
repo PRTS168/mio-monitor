@@ -26,3 +26,9 @@
 # Logs / temp
 *.log
 *.tmp
+
+# 第三方角色美术素材（版权物，不随仓库分发；本地放入同名图片即可启用）
+/app/src/main/res/drawable-nodpi/shiroko_*
+
+# 内部交接文档（含本机与测试设备信息）
+/交接工作文档.md

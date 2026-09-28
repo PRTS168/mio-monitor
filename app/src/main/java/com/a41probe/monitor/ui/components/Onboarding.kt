@@ -46,9 +46,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.a41probe.monitor.R
 import com.a41probe.monitor.ui.theme.Ink
+import com.a41probe.monitor.ui.theme.SpecialConfig
+import com.a41probe.monitor.ui.theme.artKeyResolve
 
 /** 引导单页：立绘/表情 + 标题 + 分条说明 */
-data class OnboardingPage(val art: Int, val title: String, val bullets: List<String>)
+data class OnboardingPage(val artKey: String, val title: String, val bullets: List<String>)
 
 /** 引导持久化：SharedPreferences 名与"已完成引导"键 */
 const val MIO_PREFS = "mio_prefs"
@@ -68,7 +70,8 @@ fun OnboardingOverlay(pages: List<OnboardingPage>, onFinish: () -> Unit) {
 
     Box(
         Modifier.fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Color.White, Color(0xFFEAF4FF)))),
+            // v1.3.1: 引导底随配色主题走（原写死淡蓝，遇暖色主题会串色）
+            .background(Brush.verticalGradient(listOf(Ink.card, Ink.bg))),
     ) {
         // 右上角跳过
         Text(
@@ -100,7 +103,7 @@ fun OnboardingOverlay(pages: List<OnboardingPage>, onFinish: () -> Unit) {
                 ) {
                     Spacer(Modifier.height(34.dp))
                     Image(
-                        painter = painterResource(p.art),
+                        painter = painterResource(artKeyResolve(p.artKey)),
                         contentDescription = null,
                         contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxWidth().height(248.dp),
@@ -178,8 +181,8 @@ fun OnboardingOverlay(pages: List<OnboardingPage>, onFinish: () -> Unit) {
 /** Mio 澪 使用引导内容（10 页，覆盖全部页面与卡片）。 */
 fun mioOnboardingPages(): List<OnboardingPage> = listOf(
     OnboardingPage(
-        R.drawable.mio_expr_hi_head,
-        "你好，我是澪",
+        "expr:hi_head",
+        "你好，我是${SpecialConfig.current().label}",
         listOf(
             "Mio 澪是一款纯只读的硬件参数监控工具",
             "实时展示 CPU、GPU、电池、温度、传感器等全部可读参数",
@@ -188,7 +191,7 @@ fun mioOnboardingPages(): List<OnboardingPage> = listOf(
         ),
     ),
     OnboardingPage(
-        R.drawable.mio_expr_think_head,
+        "expr:think_head",
         "三档权限，按需选择",
         listOf(
             "免提权（—）：电量、CPU 频率、内存、传感器，开箱即用",
@@ -199,7 +202,7 @@ fun mioOnboardingPages(): List<OnboardingPage> = listOf(
         ),
     ),
     OnboardingPage(
-        R.drawable.mio_dashboard,
+        "art:dashboard",
         "仪表盘 · 一眼总览",
         listOf(
             "总览：电量 / CPU 占用 / 内存已用 / 最高结温 四项并排；免提权可读电量、内存、电池温度",
@@ -209,7 +212,7 @@ fun mioOnboardingPages(): List<OnboardingPage> = listOf(
         ),
     ),
     OnboardingPage(
-        R.drawable.mio_cpu,
+        "art:cpu",
         "CPU · 占用 / 频率 / 档位 / 调度",
         listOf(
             "总占用：大数字与 60 秒曲线（S）",
@@ -221,7 +224,7 @@ fun mioOnboardingPages(): List<OnboardingPage> = listOf(
         ),
     ),
     OnboardingPage(
-        R.drawable.mio_gpu,
+        "art:gpu",
         "GPU · 图形核心",
         listOf(
             "占用：使用率大数字与 0–100% 固定量程曲线",
@@ -231,7 +234,7 @@ fun mioOnboardingPages(): List<OnboardingPage> = listOf(
         ),
     ),
     OnboardingPage(
-        R.drawable.mio_battery,
+        "art:battery",
         "电池 · 容量 / 功率 / 健康",
         listOf(
             "状态大卡：电量环、充放电状态、功率大字",
@@ -243,7 +246,7 @@ fun mioOnboardingPages(): List<OnboardingPage> = listOf(
         ),
     ),
     OnboardingPage(
-        R.drawable.mio_thermal,
+        "art:thermal",
         "温度 · 结温 / 外壳 / 84 区",
         listOf(
             "顶部：最高结温、全温区均值、外壳 skin 温度",
@@ -255,7 +258,7 @@ fun mioOnboardingPages(): List<OnboardingPage> = listOf(
         ),
     ),
     OnboardingPage(
-        R.drawable.mio_sensor,
+        "art:sensor",
         "传感器 · 运动与环境",
         listOf(
             "加速度 X/Y/Z、陀螺仪、磁力计、光线、距离五类实时通道",
@@ -265,7 +268,7 @@ fun mioOnboardingPages(): List<OnboardingPage> = listOf(
         ),
     ),
     OnboardingPage(
-        R.drawable.mio_expr_wow_head,
+        "expr:wow_head",
         "局域网双模式 · 两台手机联动",
         listOf(
             "同一个 App，两种角色：被监控端与监控端",
@@ -277,7 +280,7 @@ fun mioOnboardingPages(): List<OnboardingPage> = listOf(
         ),
     ),
     OnboardingPage(
-        R.drawable.mio_expr_go_head,
+        "expr:go_head",
         "一切就绪",
         listOf(
             "设置页：双模式入口、提权通道、采样与导出",

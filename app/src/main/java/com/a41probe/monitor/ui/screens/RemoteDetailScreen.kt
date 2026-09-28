@@ -29,6 +29,7 @@ import com.a41probe.monitor.ui.components.AreaLine
 import com.a41probe.monitor.ui.components.BarRow
 import com.a41probe.monitor.ui.components.ProbeButton
 import com.a41probe.monitor.ui.components.SafeCard
+import com.a41probe.monitor.ui.components.SpecialFace
 import com.a41probe.monitor.ui.components.StatRow
 import com.a41probe.monitor.ui.theme.Ink
 import com.a41probe.monitor.ui.components.ScrollAware
@@ -96,6 +97,8 @@ fun RemoteDetailScreen(
         if (s == null) {
             item {
                 SafeCard(fallbackTitle = "设备状态") {
+                    // v1.3.0: 等数据时的表情（随角色预设换人）
+                    SpecialFace("shy_head", Modifier.fillMaxWidth().height(112.dp))
                     Text(e?.log?.ifBlank { "等待数据…" } ?: "等待数据…",
                         color = Ink.tx2, fontSize = 13.sp)
                     Spacer(Modifier.height(10.dp))

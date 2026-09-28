@@ -47,8 +47,10 @@ import com.a41probe.monitor.data.remote.RemoteHalTemp
 import com.a41probe.monitor.data.remote.RemoteSnapshot
 import com.a41probe.monitor.ui.components.ProbeButton
 import com.a41probe.monitor.ui.components.SafeCard
+import com.a41probe.monitor.ui.components.SpecialFace
 import com.a41probe.monitor.ui.components.pressClick
 import com.a41probe.monitor.ui.theme.Ink
+import com.a41probe.monitor.ui.theme.SpecialConfig
 import com.a41probe.monitor.ui.components.ScrollAware
 
 /** 监控端：多设备仪表盘。 */
@@ -106,18 +108,8 @@ fun MonitorScreen(
         if (devices.isEmpty()) {
             item {
                 SafeCard(fallbackTitle = "设备列表") {
-                    // v0.26.4: 头部特写资源——空态卡内脸完整可读
-                    Box(
-                        Modifier.fillMaxWidth().height(128.dp).clip(RoundedCornerShape(14.dp)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Image(
-                            painterResource(R.drawable.mio_expr_think_head),
-                            contentDescription = null,
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
+                    // v0.26.4 / v1.3.0: 空态表情——随角色预设换人，头部特写小框内脸完整可读
+                    SpecialFace("think_head", Modifier.fillMaxWidth().height(128.dp))
                     Text("尚未发现被监控设备", color = Ink.tx, fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(6.dp))

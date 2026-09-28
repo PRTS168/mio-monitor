@@ -17,14 +17,18 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.a41probe.monitor.ui.theme.Ink
+import com.a41probe.monitor.ui.theme.SpecialConfig
 
 /**
  * 页面背景立绘：澪固定立于内容区右下（透明底 PNG，直接融入页面底色），
@@ -58,10 +62,33 @@ fun MioArtBackground(art: Int, modifier: Modifier = Modifier) {
 }
 
 /**
- * 页面大标题（无卡片背景，iOS 大标题风格）：置于 LazyColumn 首个 item。
- * 与 MioArtBackground 搭配——立绘在背景层，标题在内容流顶部。
+ * 当前角色的表情小图（v1.3.0）：空态、提示、引导统一用它，随角色预设自动换人。
+ * key 取自 expr 表：`think_head / hi_head / shy_head / wow_head / go_head`（缺项自动回落澪）。
+ * 尺寸由调用方通过 modifier 控制，默认按 Fit 居中，不会裁到脸。
  */
 @Composable
+fun SpecialFace(
+    key: String,
+    modifier: Modifier = Modifier,
+    corner: Dp = 14.dp,
+    scale: ContentScale = ContentScale.Fit,
+) {
+    val res = SpecialConfig.current().exprFor(key)
+    if (res == 0) return   // 素材缺失：不画，也不留空占位
+    Box(modifier.clip(RoundedCornerShape(corner)), contentAlignment = Alignment.Center) {
+        Image(
+            painter = painterResource(res),
+            contentDescription = null,
+            contentScale = scale,
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+/**
+ * 页面大标题（无卡片背景，iOS 大标题风格）：置于 LazyColumn 首个 item。
+ * 与 MioArtBackground 搭配——立绘在背景层，标题在内容流顶部。
+ */@Composable
 fun MioPageTitle(title: String, subtitle: String, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp)) {
         Text(title, color = Ink.tx, fontSize = 24.sp, fontWeight = FontWeight.Bold)

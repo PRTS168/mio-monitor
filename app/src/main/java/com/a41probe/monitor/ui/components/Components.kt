@@ -59,6 +59,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -142,7 +143,7 @@ fun ProbeCard(
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .shadow(
                 elevation = elev, shape = CardShape, clip = false,
-                ambientColor = Color(0x1F4A90D9), spotColor = Color(0x144A90D9),
+                ambientColor = Color(0x14000000), spotColor = Color(0x12000000),
             )
             .clip(CardShape)
             // 所有卡片都可按下（无 onClick 的卡片也给触感与视觉反馈，不做任何动作）
@@ -295,20 +296,25 @@ fun PrivBadge(priv: Priv, text: String? = null) {
     }
 }
 
-/** 状态徽章：小圆点 + 文字；onBlue=true 用于蓝色顶栏（白底反白）；alpha 供停更闪烁 */
+/** 状态徽章：小圆点 + 文字；onBlue=true 用于强调色顶栏。
+ *  文字走 Ink.onAccent（浅色主色自动转深字）；底色片按 onAccent 明暗取不同透明度，
+ *  保证深字/白字两种情形都比裸底色更清楚。alpha 供停更闪烁 */
 @Composable
 fun DotBadge(dotColor: Color, text: String, onBlue: Boolean = false, alpha: Float = 1f) {
+    val pill = if (onBlue) {
+        Color.White.copy(alpha = if (Ink.onAccent.luminance() > 0.5f) 0.18f else 0.32f)
+    } else Ink.panel
     Row(
         modifier = Modifier
             .graphicsLayer { this.alpha = alpha }
             .clip(RoundedCornerShape(7.dp))
-            .background(if (onBlue) Color.White.copy(alpha = 0.18f) else Ink.panel)
+            .background(pill)
             .padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(5.dp).clip(RoundedCornerShape(2.5.dp)).background(dotColor))
         Spacer(Modifier.width(5.dp))
-        Text(text, color = if (onBlue) Color.White else Ink.tx2, fontSize = 10.5.sp)
+        Text(text, color = if (onBlue) Ink.onAccent else Ink.tx2, fontSize = 10.5.sp)
     }
 }
 
@@ -508,7 +514,7 @@ fun ProbeButton(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text, color = if (accent) Color.White else Ink.accent, fontSize = 13.sp,
+        Text(text, color = if (accent) Ink.onAccent else Ink.accent, fontSize = 13.sp,
             fontWeight = if (accent) FontWeight.SemiBold else FontWeight.Medium)
     }
 }
